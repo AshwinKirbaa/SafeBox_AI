@@ -1,0 +1,3 @@
+"""SafeBox AI - Member 2 Sandbox Worker Package."""
+
+__version__ = "1.0.0"
