@@ -7,31 +7,66 @@ import {
   ArrowRightLeft,
   Cpu,
   Cloud,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react'
 import type { RunRecord } from '../types/safebox'
 import { AiEvaluationPanel } from './AiEvaluationPanel'
 import { InfraIsolationPanel } from './InfraIsolationPanel'
 
-interface RunDetailViewProps {
+export interface RunDetailViewProps {
   run: RunRecord | null
   loading: boolean
+  selectedRunId?: string | null
+  error?: string | null
+  onRetry?: () => void
 }
 
-export const RunDetailView: React.FC<RunDetailViewProps> = ({ run, loading }) => {
+export const RunDetailView: React.FC<RunDetailViewProps> = ({
+  run,
+  loading,
+  selectedRunId,
+  error,
+  onRetry,
+}) => {
   const [copiedId, setCopiedId] = useState(false)
 
-  if (loading && !run) {
+  if (loading && !run && !error) {
     return (
-      <div className="card detail-placeholder-card">
+      <div className="card detail-placeholder-card" data-testid="detail-initial-loading">
         <div className="spinner-large" />
         <p>Loading security audit record...</p>
+        {selectedRunId && (
+          <span className="text-xs font-mono text-muted">ID: {selectedRunId}</span>
+        )}
+      </div>
+    )
+  }
+
+  if (error && !run) {
+    return (
+      <div className="card detail-placeholder-card detail-error-card" data-testid="detail-error-card">
+        <AlertCircle className="empty-icon text-rose" />
+        <h3>Unable to Load Security Run</h3>
+        <p className="text-muted">{error}</p>
+        {onRetry && (
+          <button
+            type="button"
+            className="btn-secondary btn-sm mt-2"
+            onClick={onRetry}
+            data-testid="btn-retry-detail"
+          >
+            <RefreshCw className="icon-xs mr-1" />
+            Retry Audit Load
+          </button>
+        )}
       </div>
     )
   }
 
   if (!run) {
     return (
-      <div className="card detail-placeholder-card">
+      <div className="card detail-placeholder-card" data-testid="detail-empty-placeholder">
         <Layers className="empty-icon text-muted" />
         <h3>No Security Run Selected</h3>
         <p className="text-muted">
@@ -40,6 +75,8 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({ run, loading }) =>
       </div>
     )
   }
+
+  const isTransitioning = Boolean(loading || (selectedRunId && run.run_id !== selectedRunId))
 
   const handleCopyId = () => {
     navigator.clipboard.writeText(run.run_id)
@@ -69,7 +106,31 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({ run, loading }) =>
   const latency = run.result?.observed_latency_ms
 
   return (
-    <div className="run-detail-wrapper" data-testid="run-detail-view">
+    <div
+      className={`run-detail-wrapper ${isTransitioning ? 'panels-transitioning' : ''}`}
+      data-testid="run-detail-view"
+    >
+      {/* Inline Error banner if switching to a new run failed while showing old run */}
+      {error && (
+        <div className="alert-banner alert-error inline-detail-error" role="alert" data-testid="detail-inline-error">
+          <div className="alert-content">
+            <AlertCircle className="alert-icon" />
+            <span>{error}</span>
+          </div>
+          {onRetry && (
+            <button
+              type="button"
+              className="btn-secondary btn-xs"
+              onClick={onRetry}
+              data-testid="btn-retry-detail"
+            >
+              <RefreshCw className="icon-xs mr-1" />
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Run Summary Top Bar */}
       <div className="run-meta-bar">
         <div className="meta-bar-left">
@@ -93,9 +154,24 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({ run, loading }) =>
             >
               {targetLabel}
             </span>
+            {isTransitioning && (
+              <span
+                className="target-run-badge badge-target-loading"
+                data-testid="active-run-loading-badge"
+              >
+                <RefreshCw className="icon-xs spin mr-1" />
+                Loading Run...
+              </span>
+            )}
           </div>
 
           <div className="run-details-chips">
+            {isTransitioning && (
+              <span className="chip chip-loading" data-testid="active-run-loading-chip">
+                <RefreshCw className="icon-xs spin mr-1 text-cyan" />
+                Fetching run details...
+              </span>
+            )}
             <span className="chip">
               Test: <strong>{run.test_id}</strong> (v{run.test_version})
             </span>

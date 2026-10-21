@@ -239,11 +239,14 @@ export const RunHistory: React.FC<RunHistoryProps> = ({
                     </td>
                     <td>
                       <button
-                        className="btn-select-run"
+                        type="button"
+                        className={`btn-select-run ${isSelected ? 'btn-viewing' : ''}`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onSelectRun(r.run_id)
                         }}
+                        aria-label={isSelected ? `Viewing run ${r.run_id}. Click to view details.` : `Inspect run ${r.run_id}`}
+                        title={isSelected ? 'Currently viewing in detail panel. Click to view details.' : 'Inspect this run in detail view'}
                       >
                         <ExternalLink className="btn-mini-icon" />
                         <span>{isSelected ? 'Viewing' : 'Inspect'}</span>

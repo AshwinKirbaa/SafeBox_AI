@@ -78,4 +78,110 @@ describe('RunDetailView Component', () => {
     expect(chip).toHaveTextContent('[Simulated Mock]')
     expect(chip).not.toHaveTextContent('[Live Model]')
   })
+
+  it('renders initial loading placeholder when loading with no run', () => {
+    render(<RunDetailView run={null} loading={true} selectedRunId="run_pending123" />)
+    expect(screen.getByTestId('detail-initial-loading')).toBeInTheDocument()
+    expect(screen.getByText(/Loading security audit record/i)).toBeInTheDocument()
+    expect(screen.getByText(/run_pending123/)).toBeInTheDocument()
+  })
+
+  it('renders error card and triggers onRetry when initial load fails', () => {
+    let retried = false
+    render(
+      <RunDetailView
+        run={null}
+        loading={false}
+        error="Network error fetching run"
+        onRetry={() => {
+          retried = true
+        }}
+      />
+    )
+    expect(screen.getByTestId('detail-error-card')).toBeInTheDocument()
+    expect(screen.getByText('Network error fetching run')).toBeInTheDocument()
+
+    const retryBtn = screen.getByTestId('btn-retry-detail')
+    retryBtn.click()
+    expect(retried).toBe(true)
+  })
+
+  it('displays in-flight transition loading badge and chip when switching to a different run', () => {
+    const run = createMockRun('mock', 'mock-vulnerable')
+    render(
+      <RunDetailView
+        run={run}
+        loading={true}
+        selectedRunId="run_new_in_flight_456"
+      />
+    )
+
+    // Current run's details are still safely visible
+    expect(screen.getByTestId('active-run-target-badge')).toHaveTextContent('MOCK SIMULATOR')
+
+    // In-flight indicator is active
+    expect(screen.getByTestId('active-run-loading-badge')).toBeInTheDocument()
+    expect(screen.getByTestId('active-run-loading-chip')).toBeInTheDocument()
+
+    // Panel grid has transitioning class
+    const wrapper = screen.getByTestId('run-detail-view')
+    expect(wrapper).toHaveClass('panels-transitioning')
+  })
+
+  it('renders inline error banner with retry option if fetching newly selected run fails', () => {
+    const run = createMockRun('ollama', 'llama3.2:3b')
+    let retried = false
+    render(
+      <RunDetailView
+        run={run}
+        loading={false}
+        selectedRunId="run_failed_switch_789"
+        error="Failed to load run run_failed_switch_789: 500 Server Error"
+        onRetry={() => {
+          retried = true
+        }}
+      />
+    )
+
+    // Existing run is still visible
+    expect(screen.getByText(run.run_id)).toBeInTheDocument()
+
+    // Inline error banner is present
+    expect(screen.getByTestId('detail-inline-error')).toBeInTheDocument()
+    expect(
+      screen.getByText('Failed to load run run_failed_switch_789: 500 Server Error')
+    ).toBeInTheDocument()
+
+    const retryBtn = screen.getByTestId('btn-retry-detail')
+    retryBtn.click()
+    expect(retried).toBe(true)
+  })
+
+  it('updates properly when switched to a second run', () => {
+    const run1 = createMockRun('mock', 'mock-model-1')
+    run1.run_id = 'run_00000000000000000000000000000001'
+
+    const run2 = createMockRun('ollama', 'llama3.2:3b')
+    run2.run_id = 'run_00000000000000000000000000000002'
+
+    const { rerender } = render(
+      <RunDetailView run={run1} loading={false} selectedRunId={run1.run_id} />
+    )
+    expect(screen.getByText(run1.run_id)).toBeInTheDocument()
+    expect(screen.getByTestId('active-run-target-badge')).toHaveTextContent('MOCK SIMULATOR')
+
+    // Transitioning state
+    rerender(
+      <RunDetailView run={run1} loading={true} selectedRunId={run2.run_id} />
+    )
+    expect(screen.getByTestId('active-run-loading-badge')).toBeInTheDocument()
+
+    // Second run completed
+    rerender(
+      <RunDetailView run={run2} loading={false} selectedRunId={run2.run_id} />
+    )
+    expect(screen.getByText(run2.run_id)).toBeInTheDocument()
+    expect(screen.getByTestId('active-run-target-badge')).toHaveTextContent('OLLAMA · llama3.2:3b')
+    expect(screen.queryByTestId('active-run-loading-badge')).not.toBeInTheDocument()
+  })
 })

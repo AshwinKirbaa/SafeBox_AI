@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Header } from './components/Header'
 import { TestLauncher } from './components/TestLauncher'
 import { RunDetailView } from './components/RunDetailView'
@@ -37,6 +37,8 @@ export const App: React.FC = () => {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null)
   const [loadingDetail, setLoadingDetail] = useState<boolean>(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const detailSectionRef = useRef<HTMLElement>(null)
 
   const [isRunning, setIsRunning] = useState<boolean>(false)
   const [bannerError, setBannerError] = useState<string | null>(null)
@@ -103,18 +105,48 @@ export const App: React.FC = () => {
     [selectedRunId, filters]
   )
 
+  // Scroll to detail section
+  const scrollToDetail = useCallback(() => {
+    if (detailSectionRef.current) {
+      if (typeof detailSectionRef.current.scrollIntoView === 'function') {
+        detailSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      } else if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+        const top = detailSectionRef.current.offsetTop - 24
+        window.scrollTo({ top: top > 0 ? top : 0, behavior: 'smooth' })
+      }
+    }
+  }, [])
+
+  // Handle run selection with auto-scroll
+  const handleSelectRun = useCallback(
+    (runId: string) => {
+      setSelectedRunId(runId)
+      scrollToDetail()
+    },
+    [scrollToDetail]
+  )
+
   // 5. Fetch Specific Run Detail
   const fetchRunDetail = useCallback(async (runId: string) => {
     setLoadingDetail(true)
+    setDetailError(null)
     try {
       const data = await api.getRun(runId)
       setSelectedRun(data)
     } catch (err) {
-      setBannerError(`Failed to load run ${runId}: ${(err as Error).message}`)
+      const msg = `Failed to load run ${runId}: ${(err as Error).message}`
+      setDetailError(msg)
+      setBannerError(msg)
     } finally {
       setLoadingDetail(false)
     }
   }, [])
+
+  const handleRetryDetail = useCallback(() => {
+    if (selectedRunId) {
+      void fetchRunDetail(selectedRunId)
+    }
+  }, [selectedRunId, fetchRunDetail])
 
   // Initial load
   useEffect(() => {
@@ -164,6 +196,7 @@ export const App: React.FC = () => {
     let ignore = false
     const loadDetail = async () => {
       setLoadingDetail(true)
+      setDetailError(null)
       try {
         const data = await api.getRun(selectedRunId)
         if (!ignore) {
@@ -171,7 +204,9 @@ export const App: React.FC = () => {
         }
       } catch (err) {
         if (!ignore) {
-          setBannerError(`Failed to load run ${selectedRunId}: ${(err as Error).message}`)
+          const msg = `Failed to load run ${selectedRunId}: ${(err as Error).message}`
+          setDetailError(msg)
+          setBannerError(msg)
         }
       } finally {
         if (!ignore) {
@@ -190,10 +225,12 @@ export const App: React.FC = () => {
     setIsRunning(true)
     setBannerError(null)
     setBannerSuccess(null)
+    setDetailError(null)
     try {
       const newRecord = await api.runSecurityTest(req)
       setSelectedRun(newRecord)
       setSelectedRunId(newRecord.run_id)
+      scrollToDetail()
       setBannerSuccess(
         `Security test completed. Verdict: ${newRecord.result?.status || 'COMPLETED'} for run ${newRecord.run_id}`
       )
@@ -281,8 +318,14 @@ export const App: React.FC = () => {
         </section>
 
         {/* Primary View: Two Independent Security Result Panels */}
-        <section className="detail-section">
-          <RunDetailView run={selectedRun} loading={loadingDetail} />
+        <section ref={detailSectionRef} id="active-run-detail" className="detail-section">
+          <RunDetailView
+            run={selectedRun}
+            loading={loadingDetail}
+            selectedRunId={selectedRunId}
+            error={detailError}
+            onRetry={handleRetryDetail}
+          />
         </section>
 
         {/* Bottom Section: Run History Explorer */}
@@ -295,7 +338,7 @@ export const App: React.FC = () => {
             hasMore={hasMoreRuns}
             selectedRunId={selectedRunId}
             loading={loadingRuns}
-            onSelectRun={(runId) => setSelectedRunId(runId)}
+            onSelectRun={handleSelectRun}
             onPageChange={(newOffset) => fetchRuns(newOffset, filters)}
             onRefresh={() => fetchRuns(runOffset, filters)}
             onFilterChange={handleFilterChange}
