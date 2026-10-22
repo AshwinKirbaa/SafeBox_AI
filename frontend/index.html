@@ -1,13 +1,34 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><polygon points='16,2 29,9.5 29,24.5 16,32 3,24.5 3,9.5' stroke='%2322D3EE' stroke-width='2' fill='%230A1022'/><circle cx='16' cy='17' r='6' fill='%2322D3EE' fill-opacity='0.25' stroke='%2322D3EE' stroke-width='2'/><circle cx='16' cy='17' r='2.5' fill='%2322D3EE'/><path d='M16 6v4M16 24v4M6.5 11.5l3.5 2M22 20.5l3.5 2M6.5 22.5l3.5-2M22 13.5l3.5-2' stroke='%2322D3EE' stroke-width='1.5' stroke-linecap='round'/></svg>" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SafeBox AI — Security & Sandbox Isolation Dashboard</title>
-    <meta name="description" content="Autonomous AI Red-Teaming & Hardened Docker Sandbox Isolation Verification Dashboard" />
+    <title>SafeBox AI — Private File Vault with Built-in Security Analyst</title>
+    <meta name="description" content="Your files, guarded and explained. Private file vault with SHA-256 cryptographic integrity verification, multi-engine malware scanning, and plain-English AI advisory analysis." />
+    <!-- Typography: Sora (headings), Inter (body), JetBrains Mono (hashes/code) - Non-blocking async load -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <style>
+      html, body, #root {
+        background-color: #05070D !important;
+        color: #E6EBF5 !important;
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+      }
+    </style>
+    <script>
+      window.addEventListener('error', function(e) {
+        console.error('Global Error Caught:', e.error || e.message);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        console.error('Unhandled Promise Rejection:', e.reason);
+      });
+    </script>
   </head>
-  <body>
+  <body class="bg-[#05070D] text-[#E6EBF5] antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

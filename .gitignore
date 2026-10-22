@@ -36,3 +36,8 @@ Thumbs.db
 !.env.example
 dist/
 coverage/
+
+# Scratch and logs
+*.log
+tunnel-url.txt
+dom*.html
