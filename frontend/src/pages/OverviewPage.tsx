@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import {
   Activity,
   Layers,
@@ -10,6 +10,10 @@ import {
   Database,
   ArrowRight,
   HelpCircle,
+  Copy,
+  Check,
+  ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react'
 import type { HealthResponse, RunSummary, RunRecord } from '../types/safebox'
 import type { AppPage } from '../types/navigation'
@@ -33,6 +37,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onSelectRun,
   onNavigate,
 }) => {
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
   // Compute genuine statistics from actual run records
   const evaluatedCount = runs.length
   const passCount = runs.filter((r) => r.status === 'PASS').length
@@ -41,16 +47,20 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
   const recentRuns = runs.slice(0, 5)
 
+  const handleCopy = (text: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text)
+      setCopiedId(text)
+      setTimeout(() => setCopiedId(null), 1800)
+    }
+  }
+
   return (
     <div className="page-container overview-page">
-      {/* Top Welcome / Architecture Highlight */}
+      {/* Top Welcome / Platform Hero */}
       <div className="overview-hero-card">
         <div className="hero-content">
-          <div className="hero-badge">
-            <span className="badge-pulse-dot" />
-            <span>AI RED-TEAMING & DOCKER SANDBOX ISOLATION</span>
-          </div>
-          <h2 className="hero-title">SafeBox AI Defense Platform</h2>
+          <h1 className="hero-title">SafeBox AI Defense Platform</h1>
           <p className="hero-description">
             Autonomous dual-plane security benchmarking. Evaluates AI model behavioral compliance
             against prompt injection and secret canary extraction, while independently validating
@@ -79,42 +89,44 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
         <div className="hero-stats-grid">
           <div className="stat-card">
-            <span className="stat-label">TOTAL EVALUATIONS</span>
+            <span className="stat-label">Total Evaluations</span>
             <div className="stat-value font-mono">{totalRuns}</div>
             <span className="stat-sub">Persisted in SQLite database</span>
           </div>
           <div className="stat-card">
-            <span className="stat-label">RECENT PASS RATE</span>
+            <span className="stat-label">Recent Pass Rate</span>
             <div className="stat-value font-mono text-emerald">{passRate}%</div>
             <span className="stat-sub">{passCount} passed of {evaluatedCount} recent</span>
           </div>
           <div className="stat-card">
-            <span className="stat-label">VIOLATIONS DETECTED</span>
+            <span className="stat-label">Violations Detected</span>
             <div className="stat-value font-mono text-rose">{failCount}</div>
-            <span className="stat-sub">Adversarial policy leaks</span>
+            <span className="stat-sub">
+              {failCount === 0 ? 'Zero adversarial leaks' : `${failCount} policy breaches`}
+            </span>
           </div>
           <div className="stat-card">
-            <span className="stat-label">ACTIVE ENGINE</span>
+            <span className="stat-label">Active Engine</span>
             <div className="stat-value font-mono text-cyan text-sm">
               {health?.target_mode === 'mock'
                 ? 'MOCK SIMULATOR'
-                : health?.ollama?.configured_model || health?.target_mode || 'MOCK'}
+                : health?.ollama?.configured_model || health?.target_mode?.toUpperCase() || 'MOCK'}
             </div>
             <span className="stat-sub">
-              {health?.ollama?.reachable ? 'Ollama Daemon Live' : 'Deterministic Mock Engine'}
+              {health?.ollama?.reachable ? 'Ollama daemon live' : 'Deterministic mock engine'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Main Grid: Infrastructure Readiness & Quick Actions */}
+      {/* Main Grid: Infrastructure Readiness & Active Audit Spotlight */}
       <div className="overview-bento-grid">
         {/* Card 1: System Readiness Matrix */}
         <div className="card bento-card">
           <div className="card-header">
             <div className="card-header-title">
               <Activity className="card-header-icon text-cyan" />
-              <h3>System & Engine Readiness</h3>
+              <h2>System & Engine Readiness</h2>
             </div>
             <span className={`status-pill ${healthError ? 'status-pill-error' : 'status-pill-ok'}`}>
               {healthError ? 'API OFFLINE' : 'HEALTHY'}
@@ -129,7 +141,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   <div className="item-desc">REST API & Security Evaluator rules engine</div>
                 </div>
               </div>
-              <span className={`item-badge ${healthError ? 'badge-fail' : 'badge-pass'} font-mono`}>
+              <span className={`badge badge-sm font-mono ${healthError ? 'badge-fail' : 'badge-pass'}`}>
                 {healthError ? 'OFFLINE' : 'ONLINE'}
               </span>
             </div>
@@ -142,7 +154,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   <div className="item-desc">Persistent run records, evidence and checks</div>
                 </div>
               </div>
-              <span className={`item-badge ${health?.database_ok ? 'badge-pass' : 'badge-fail'} font-mono`}>
+              <span className={`badge badge-sm font-mono ${health?.database_ok ? 'badge-pass' : 'badge-fail'}`}>
                 {health?.database_ok ? 'CONNECTED' : 'OFFLINE'}
               </span>
             </div>
@@ -160,13 +172,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 </div>
               </div>
               <span
-                className={`item-badge ${
+                className={`badge badge-sm font-mono ${
                   health?.ollama?.reachable && health?.ollama?.model_available
                     ? 'badge-pass'
                     : health?.ollama?.reachable
                     ? 'badge-warning'
-                    : 'badge-neutral'
-                } font-mono`}
+                    : 'badge-missing'
+                }`}
               >
                 {health?.ollama?.reachable ? 'READY' : 'OFFLINE'}
               </span>
@@ -180,7 +192,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   <div className="item-desc">Hardened container worker with 7 boundary probes</div>
                 </div>
               </div>
-              <span className="item-badge badge-pass font-mono">SUPPORTED</span>
+              <span className="badge badge-sm badge-pass font-mono">SUPPORTED</span>
             </div>
           </div>
         </div>
@@ -190,10 +202,16 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           <div className="card-header">
             <div className="card-header-title">
               <FileSearch className="card-header-icon text-violet" />
-              <h3>Active Audit Inspection</h3>
+              <h2>Active Audit Inspection</h2>
             </div>
             {selectedRun && (
-              <span className={`status-pill status-pill-${(selectedRun.result?.status || 'missing').toLowerCase()}`}>
+              <span className={`badge badge-sm font-mono ${
+                selectedRun.result?.status === 'PASS'
+                  ? 'badge-pass'
+                  : selectedRun.result?.status === 'FAIL'
+                  ? 'badge-fail'
+                  : 'badge-pending'
+              }`}>
                 {selectedRun.result?.status || 'RUNNING'}
               </span>
             )}
@@ -202,9 +220,24 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           {selectedRun ? (
             <div className="active-run-spotlight">
               <div className="spotlight-header">
-                <div>
-                  <span className="text-muted text-xs">Run ID:</span>
-                  <div className="font-mono text-sm font-semibold">{selectedRun.run_id}</div>
+                <div className="spotlight-id-box">
+                  <span className="spotlight-id-label">AUDIT RUN ID:</span>
+                  <div className="spotlight-id-val-row">
+                    <code className="font-mono text-sm font-semibold">{selectedRun.run_id}</code>
+                    <button
+                      type="button"
+                      className="btn-ghost-sm btn-copy-inline"
+                      onClick={() => handleCopy(selectedRun.run_id)}
+                      title="Copy full Run ID"
+                      aria-label="Copy Run ID"
+                    >
+                      {copiedId === selectedRun.run_id ? (
+                        <Check className="icon-xs text-emerald" />
+                      ) : (
+                        <Copy className="icon-xs" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -218,11 +251,11 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
               <div className="spotlight-meta-grid">
                 <div className="meta-cell">
-                  <span className="cell-label">Test Benchmark:</span>
+                  <span className="cell-label">Test Benchmark</span>
                   <strong className="cell-value font-mono">{selectedRun.test_id}</strong>
                 </div>
                 <div className="meta-cell">
-                  <span className="cell-label">Target Engine:</span>
+                  <span className="cell-label">Target Engine</span>
                   <strong className="cell-value font-mono">
                     {selectedRun.target.mode === 'mock'
                       ? 'Mock Simulator'
@@ -230,25 +263,48 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   </strong>
                 </div>
                 <div className="meta-cell">
-                  <span className="cell-label">AI Safety Verdict:</span>
-                  <span className={`cell-value font-mono text-${(selectedRun.result?.status || 'missing').toLowerCase()}`}>
-                    {selectedRun.result?.status === 'PASS' && 'PASS (Adhered)'}
-                    {selectedRun.result?.status === 'FAIL' && 'FAIL (Policy Breach)'}
-                    {selectedRun.result?.status === 'ERROR' && 'ERROR'}
-                    {!selectedRun.result && 'PENDING'}
-                  </span>
+                  <span className="cell-label">AI Safety Verdict</span>
+                  <div className="cell-value-badge">
+                    {selectedRun.result?.status === 'PASS' && (
+                      <span className="badge badge-sm badge-pass font-mono">
+                        <ShieldCheck className="badge-icon" />
+                        <span>PASS (Adhered)</span>
+                      </span>
+                    )}
+                    {selectedRun.result?.status === 'FAIL' && (
+                      <span className="badge badge-sm badge-fail font-mono">
+                        <ShieldAlert className="badge-icon" />
+                        <span>FAIL (Policy Breach)</span>
+                      </span>
+                    )}
+                    {selectedRun.result?.status === 'ERROR' && (
+                      <span className="badge badge-sm badge-error font-mono">ERROR</span>
+                    )}
+                    {!selectedRun.result && (
+                      <span className="badge badge-sm badge-pending font-mono">PENDING</span>
+                    )}
+                  </div>
                 </div>
                 <div className="meta-cell">
-                  <span className="cell-label">Docker Isolation:</span>
-                  <span className={`cell-value font-mono text-${selectedRun.infrastructure.status.toLowerCase()}`}>
-                    {selectedRun.infrastructure.status === 'PASS' ? 'ISOLATION PASS (7/7)' : selectedRun.infrastructure.status}
-                  </span>
+                  <span className="cell-label">Docker Isolation</span>
+                  <div className="cell-value-badge">
+                    <span className={`badge badge-sm font-mono ${
+                      selectedRun.infrastructure.status === 'PASS' ? 'badge-pass' : 'badge-missing'
+                    }`}>
+                      {selectedRun.infrastructure.status === 'PASS'
+                        ? 'ISOLATION PASS (7/7)'
+                        : selectedRun.infrastructure.status}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <p className="spotlight-explanation text-xs text-muted">
-                {selectedRun.result?.explanation || 'No AI policy explanation recorded.'}
-              </p>
+              <div className="spotlight-explanation-box">
+                <span className="explanation-label">EVALUATOR REASONING:</span>
+                <p className="spotlight-explanation">
+                  {selectedRun.result?.explanation || 'No AI policy explanation recorded.'}
+                </p>
+              </div>
 
               <div className="spotlight-quick-links">
                 <button
@@ -290,7 +346,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         <div className="card-header">
           <div className="card-header-title">
             <History className="card-header-icon text-cyan" />
-            <h3>Recent Security Evaluations ({recentRuns.length})</h3>
+            <h2>Recent Security Evaluations ({recentRuns.length})</h2>
           </div>
           <button
             type="button"
@@ -332,7 +388,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                       </span>
                     </td>
                     <td>
-                      <span className={`status-pill status-pill-${(r.status || 'pending').toLowerCase()} text-xs`}>
+                      <span className={`badge badge-sm font-mono ${
+                        r.status === 'PASS'
+                          ? 'badge-pass'
+                          : r.status === 'FAIL'
+                          ? 'badge-fail'
+                          : 'badge-pending'
+                      }`}>
                         {r.status || 'PENDING'}
                       </span>
                     </td>
@@ -359,6 +421,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             onNavigate('workflow')
                           }}
                           title="Open in Workflow Canvas"
+                          aria-label="Open in Workflow Canvas"
                         >
                           <Network className="icon-xs" />
                         </button>
@@ -381,3 +444,4 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     </div>
   )
 }
+

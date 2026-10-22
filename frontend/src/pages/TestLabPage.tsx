@@ -11,8 +11,8 @@ import type { AppPage } from '../types/navigation'
 import {
   Network,
   FileSearch,
-  CheckCircle2,
   ShieldCheck,
+  ShieldAlert,
   Server,
   Layers,
 } from 'lucide-react'
@@ -42,12 +42,18 @@ export const TestLabPage: React.FC<TestLabPageProps> = ({
 }) => {
   return (
     <div className="page-container test-lab-page">
-      {/* Test Launch Success Notification with Direct Action CTAs */}
+      {/* Test Launch Verdict Notification with Direct Action CTAs */}
       {lastLaunchedRun && !isRunning && (
-        <div className="card test-launch-success-banner mb-4">
+        <div className={`card test-launch-success-banner ${
+          lastLaunchedRun.result?.status === 'FAIL' ? 'border-rose-subtle' : ''
+        } mb-4`}>
           <div className="success-banner-left">
             <div className="success-icon-badge">
-              <CheckCircle2 className="icon-sm text-emerald" />
+              {lastLaunchedRun.result?.status === 'FAIL' ? (
+                <ShieldAlert className="icon-sm text-rose" />
+              ) : (
+                <ShieldCheck className="icon-sm text-emerald" />
+              )}
             </div>
             <div>
               <h4 className="success-banner-title">
@@ -56,7 +62,11 @@ export const TestLabPage: React.FC<TestLabPageProps> = ({
               <p className="success-banner-desc">
                 AI Safety Verdict:{' '}
                 <strong className={`text-${(lastLaunchedRun.result?.status || 'missing').toLowerCase()}`}>
-                  {lastLaunchedRun.result?.status || 'COMPLETED'}
+                  {lastLaunchedRun.result?.status === 'PASS'
+                    ? 'PASS (Adhered)'
+                    : lastLaunchedRun.result?.status === 'FAIL'
+                    ? 'FAIL (Policy Breach)'
+                    : lastLaunchedRun.result?.status || 'COMPLETED'}
                 </strong>
                 {' '}&bull; Target: {lastLaunchedRun.target.mode === 'mock' ? 'Mock Simulator' : lastLaunchedRun.target.model}
               </p>

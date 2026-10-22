@@ -17,7 +17,7 @@ import type {
   RunRequest,
   SavedConnection,
 } from './types/safebox'
-import { AlertCircle, X, CheckCircle2 } from 'lucide-react'
+import { AlertCircle, X, CheckCircle2, ShieldAlert } from 'lucide-react'
 import './App.css'
 
 const getPageFromHash = (): AppPage => {
@@ -57,6 +57,7 @@ export const App: React.FC = () => {
 
   const [isRunning, setIsRunning] = useState<boolean>(false)
   const [bannerError, setBannerError] = useState<string | null>(null)
+  const [bannerFail, setBannerFail] = useState<string | null>(null)
   const [bannerSuccess, setBannerSuccess] = useState<string | null>(null)
 
   // Listen to browser hash navigation
@@ -239,15 +240,31 @@ export const App: React.FC = () => {
   const handleRunTest = async (req: RunRequest) => {
     setIsRunning(true)
     setBannerError(null)
+    setBannerFail(null)
     setBannerSuccess(null)
     setDetailError(null)
     try {
       const newRecord = await api.runSecurityTest(req)
       setSelectedRun(newRecord)
       setSelectedRunId(newRecord.run_id)
-      setBannerSuccess(
-        `Security test completed. Verdict: ${newRecord.result?.status || 'COMPLETED'} for run ${newRecord.run_id}`
-      )
+      const verdict = newRecord.result?.status
+      if (verdict === 'FAIL') {
+        setBannerFail(
+          `Security evaluation completed with policy violations detected (Verdict: FAIL) for run ${newRecord.run_id}`
+        )
+      } else if (verdict === 'PASS') {
+        setBannerSuccess(
+          `Security evaluation completed and passed (Verdict: PASS) for run ${newRecord.run_id}`
+        )
+      } else if (verdict === 'ERROR') {
+        setBannerError(
+          `Security evaluation returned an execution error (Verdict: ERROR) for run ${newRecord.run_id}`
+        )
+      } else {
+        setBannerSuccess(
+          `Security test execution completed (${verdict || 'COMPLETED'}) for run ${newRecord.run_id}`
+        )
+      }
       // Refresh history list
       fetchRuns(0, filters)
     } catch (err) {
@@ -311,6 +328,23 @@ export const App: React.FC = () => {
                 type="button"
                 className="btn-close-alert"
                 onClick={() => setBannerError(null)}
+                aria-label="Dismiss alert"
+              >
+                <X className="close-icon" />
+              </button>
+            </div>
+          )}
+
+          {bannerFail && (
+            <div className="alert-banner alert-fail" role="alert">
+              <div className="alert-content">
+                <ShieldAlert className="alert-icon text-rose" />
+                <span>{bannerFail}</span>
+              </div>
+              <button
+                type="button"
+                className="btn-close-alert"
+                onClick={() => setBannerFail(null)}
                 aria-label="Dismiss alert"
               >
                 <X className="close-icon" />

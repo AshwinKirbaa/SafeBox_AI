@@ -24,7 +24,7 @@
   /* High-legibility text hierarchy (WCAG AA Compliant) */
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
-  --text-dim: #718096;
+  --text-dim: #8fa0b5;
   --text-highlight: #ffffff;
 
   /* Strict semantic status colors - reserved for genuine security states */
@@ -386,8 +386,8 @@ button {
 }
 
 .badge-sm {
-  font-size: 0.675rem;
-  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.65rem;
 }
 
 .badge-md {
@@ -498,11 +498,9 @@ button {
 @keyframes border-glow-pulse {
   0%, 100% {
     border-color: rgba(56, 189, 248, 0.2);
-    box-shadow: 0 0 15px -4px rgba(56, 189, 248, 0.15);
   }
   50% {
-    border-color: rgba(56, 189, 248, 0.5);
-    box-shadow: 0 0 25px -2px rgba(56, 189, 248, 0.35);
+    border-color: rgba(56, 189, 248, 0.45);
   }
 }
 

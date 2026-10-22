@@ -156,7 +156,7 @@ describe('WorkflowCanvas Component', () => {
     // Inspector updates to show Member 1 Evaluator details
     expect(screen.getByText('MEMBER 1 EVALUATOR')).toBeInTheDocument()
     expect(screen.getAllByText('canary-exact-match').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Target strictly adhered to policy')).toBeInTheDocument()
+    expect(screen.getAllByText('Target strictly adhered to policy').length).toBeGreaterThanOrEqual(1)
 
     // Click Socket probe node
     fireEvent.click(screen.getByTestId('workflow-probe-docker-socket-absence'))
@@ -186,5 +186,102 @@ describe('WorkflowCanvas Component', () => {
 
     // Zoom level increments
     expect(screen.getByText('105%')).toBeInTheDocument()
+  })
+
+  it('generates SVG edge paths with start and end coordinates matching port centers', () => {
+    render(
+      <WorkflowCanvas
+        run={mockRun}
+        loading={false}
+        allRuns={mockAllRuns}
+        onSelectRunId={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    )
+
+    // Edge 1: Origin to Junction
+    const edgeOriginJunction = screen.getByTestId('edge-origin-junction')
+    expect(edgeOriginJunction).toBeInTheDocument()
+    const d1 = edgeOriginJunction.getAttribute('d')
+    expect(d1).toBeTruthy()
+    // Origin at x:60 + w:300 = 360, y:250 + h:140/2 = 320. Junction at x:440, y:230 + h:160/2 = 310
+    expect(d1).toMatch(/^M 360 320 C/)
+    expect(d1).toMatch(/440 310$/)
+
+    // Edge 2: Junction Output A to AI Evaluation Input
+    const edgeJunctionAi = screen.getByTestId('edge-junction-ai')
+    expect(edgeJunctionAi).toBeInTheDocument()
+    const d2 = edgeJunctionAi.getAttribute('d')
+    expect(d2).toBeTruthy()
+    // Junction at x:440 + w:300 = 740, Port A at y: 230 + 160*0.35 = 286. AI Eval at x:820, y: 70 + 190/2 = 165
+    expect(d2).toMatch(/^M 740 286 C/)
+    expect(d2).toMatch(/820 165$/)
+
+    // Edge 3: Junction Output B to Docker Isolation Input
+    const edgeJunctionDocker = screen.getByTestId('edge-junction-docker')
+    expect(edgeJunctionDocker).toBeInTheDocument()
+    const d3 = edgeJunctionDocker.getAttribute('d')
+    expect(d3).toBeTruthy()
+    // Junction at x:440 + w:300 = 740, Port B at y: 230 + 160*0.70 = 342. Docker at x:820, y: 350 + 160/2 = 430
+    expect(d3).toMatch(/^M 740 342 C/)
+    expect(d3).toMatch(/820 430$/)
+
+    // Edge 4: Docker Isolation to Socket Absence Probe
+    const edgeProbe = screen.getByTestId('edge-docker-probe-docker-socket-absence')
+    expect(edgeProbe).toBeInTheDocument()
+    const dProbe = edgeProbe.getAttribute('d')
+    expect(dProbe).toBeTruthy()
+    // Docker at x:820 + w:360 = 1180, y: 350 + 160/2 = 430. Probe at x:1260, y: 110 + 95/2 = 158 (or rounded)
+    expect(dProbe).toMatch(/^M 1180 430 C/)
+    expect(dProbe).toMatch(/1260 \d+$/)
+  })
+
+  it('Plane A node renders responsive two-column grid and full-width verdict banner', () => {
+    render(
+      <WorkflowCanvas
+        run={mockRun}
+        loading={false}
+        allRuns={mockAllRuns}
+        onSelectRunId={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    )
+
+    const aiNode = screen.getByTestId('workflow-node-ai')
+    expect(aiNode).toBeInTheDocument()
+
+    // Title and verdict badge
+    expect(aiNode.querySelector('.node-title')).toHaveTextContent('Plane A: AI Behavioral Safety')
+    expect(aiNode.querySelector('.node-verdict-pill')).toHaveTextContent('PASS')
+
+    // Two-column grid contains Rule and Evidence
+    expect(aiNode.querySelector('.node-two-col-grid')).toBeInTheDocument()
+    expect(aiNode.querySelector('.node-col-label')).toHaveTextContent('Rule')
+
+    // Full-width verdict explanation banner
+    expect(aiNode.querySelector('.node-verdict-banner')).toBeInTheDocument()
+    expect(aiNode.querySelector('.verdict-summary-title')).toHaveTextContent('Model Adhered to Stated Safety Policy')
+  })
+
+  it('Dual-Plane Junction node renders full-width description and compact plane tiles', () => {
+    render(
+      <WorkflowCanvas
+        run={mockRun}
+        loading={false}
+        allRuns={mockAllRuns}
+        onSelectRunId={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    )
+
+    const junctionNode = screen.getByTestId('workflow-node-junction')
+    expect(junctionNode).toBeInTheDocument()
+
+    expect(junctionNode.querySelector('.junction-description')).toHaveTextContent(
+      'Decoupled architecture: Independent behavioral evaluation and sandbox isolation.'
+    )
+    expect(junctionNode.querySelector('.junction-badges')).toBeInTheDocument()
+    expect(junctionNode.querySelector('.pill-cyan')).toHaveTextContent('PLANE A: AI POLICY')
+    expect(junctionNode.querySelector('.pill-violet')).toHaveTextContent('PLANE B: DOCKER')
   })
 })

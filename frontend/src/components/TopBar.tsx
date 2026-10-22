@@ -3,8 +3,6 @@ import {
   RefreshCw,
   Activity,
   Cpu,
-  Database,
-  Server,
   AlertCircle,
   Play,
 } from 'lucide-react'
@@ -104,9 +102,9 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
       </div>
 
-      {/* Right: Health Indicators & Global Actions */}
+      {/* Right: Consolidated System Status & Global Actions */}
       <div className="topbar-right">
-        {/* Backend Liveness */}
+        {/* Unified System Health Status */}
         <div
           className={`status-pill ${
             healthError ? 'status-pill-error' : 'status-pill-ok'
@@ -114,7 +112,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           title={
             healthError
               ? `Backend Connection Error: ${healthError}`
-              : `Backend Live at ${health?.time || 'now'}`
+              : `Backend Live · SQLite: ${health?.database_ok ? 'Connected' : 'Offline'} · Target: ${health?.target_mode?.toUpperCase() || 'MOCK'}${health?.ollama?.reachable ? ' · Ollama: Ready' : ''}`
           }
         >
           {healthError ? (
@@ -122,55 +120,23 @@ export const TopBar: React.FC<TopBarProps> = ({
           ) : (
             <Activity className="pill-icon text-emerald" />
           )}
-          <span className="pill-label">
-            {healthError ? 'API OFFLINE' : 'API LIVE'}
+          <span className="pill-label font-mono">
+            {healthError ? 'API OFFLINE' : 'SYSTEM READY'}
           </span>
         </div>
 
-        {/* Server Default Target Mode */}
+        {/* Active Engine Target */}
         <div
-          className="status-pill status-pill-neutral"
-          title="Default server execution mode configured on backend"
+          className="status-pill status-pill-neutral font-mono"
+          title={`Active execution engine: ${health?.target_mode || 'mock'}`}
         >
           <Cpu className="pill-icon text-cyan" />
           <span className="pill-label">
-            DEFAULT: <strong>{health?.target_mode?.toUpperCase() || 'MOCK'}</strong>
+            {health?.target_mode === 'mock'
+              ? 'MOCK'
+              : health?.ollama?.configured_model || health?.target_mode?.toUpperCase() || 'MOCK'}
           </span>
         </div>
-
-        {/* Database Status */}
-        <div className="status-pill status-pill-neutral">
-          <Database className="pill-icon text-violet" />
-          <span className="pill-label">
-            SQLITE: <strong>{health?.database_ok ? 'CONNECTED' : 'OFFLINE'}</strong>
-          </span>
-        </div>
-
-        {/* Ollama Status if present */}
-        {health?.ollama && (
-          <div
-            className={`status-pill ${
-              health.ollama.reachable && health.ollama.model_available
-                ? 'status-pill-ok'
-                : health.ollama.reachable
-                ? 'status-pill-warning'
-                : 'status-pill-error'
-            }`}
-            title={`Ollama server: ${
-              health.ollama.reachable ? 'Reachable' : 'Unreachable'
-            }`}
-          >
-            <Server className="pill-icon" />
-            <span className="pill-label">
-              OLLAMA:{' '}
-              {health.ollama.reachable
-                ? `${health.ollama.configured_model} ${
-                    health.ollama.model_available ? '(READY)' : '(MISSING)'
-                  }`
-                : 'OFFLINE'}
-            </span>
-          </div>
-        )}
 
         {/* Refresh Action */}
         <button
@@ -192,6 +158,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             type="button"
             className="btn-primary btn-sm btn-quick-launch"
             onClick={() => onNavigate('test-lab')}
+            data-testid="topbar-launch-btn"
           >
             <Play className="icon-xs" />
             <span>Launch Test</span>

@@ -40,7 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navButtons: NavButtonConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'test-lab', label: 'Test Lab', icon: FlaskConical },
-    { id: 'workflow', label: 'Workflow', icon: Network, badge: 'CANVAS' },
+    { id: 'workflow', label: 'Workflow', icon: Network },
     { id: 'runs', label: 'Run Explorer', icon: History },
     { id: 'details', label: 'Run Details', icon: FileSearch },
   ]
@@ -118,7 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <strong className="detail-val font-mono">{health?.target_mode?.toUpperCase() || 'MOCK'}</strong>
             </span>
             <span className="detail-row">
-              <span className="detail-key">DB:</span>
+              <span className="detail-key">SQLITE:</span>
               <strong className="detail-val font-mono">{health?.database_ok ? 'CONNECTED' : 'OFFLINE'}</strong>
             </span>
           </div>
