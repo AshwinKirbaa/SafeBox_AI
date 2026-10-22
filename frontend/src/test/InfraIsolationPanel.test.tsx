@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
 import { InfraIsolationPanel } from '../components/InfraIsolationPanel'
+import { api } from '../services/api'
 import type { InfrastructureSummary } from '../types/safebox'
 
 describe('InfraIsolationPanel Component', () => {
@@ -65,5 +66,50 @@ describe('InfraIsolationPanel Component', () => {
 
     expect(screen.getAllByText('docker socket absent at all probe locations').length).toBe(2)
     expect(screen.getByText('probe:docker-socket')).toBeInTheDocument()
+  })
+
+  it('renders launch worker button and triggers api.launchWorker on click', async () => {
+    const mockSummary: InfrastructureSummary = {
+      result_type: 'infrastructure_isolation',
+      status: 'MISSING',
+      checks: [],
+      note: 'Reported by sandbox worker.',
+    }
+    const refreshSpy = vi.fn()
+    const launchSpy = vi.spyOn(api, 'launchWorker').mockResolvedValueOnce({} as any)
+
+    render(<InfraIsolationPanel infrastructure={mockSummary} runId="run_abc123" onRefreshRun={refreshSpy} />)
+
+    const launchBtn = screen.getByTestId('btn-launch-worker')
+    expect(launchBtn).toBeInTheDocument()
+    expect(screen.getByText('Launch Worker Verification')).toBeInTheDocument()
+
+    fireEvent.click(launchBtn)
+    await waitFor(() => {
+      expect(launchSpy).toHaveBeenCalledWith('run_abc123', false)
+    })
+  })
+
+  it('displays actionable troubleshooting error if Docker is unavailable', async () => {
+    const mockSummary: InfrastructureSummary = {
+      result_type: 'infrastructure_isolation',
+      status: 'MISSING',
+      checks: [],
+      note: 'Reported by sandbox worker.',
+    }
+    vi.spyOn(api, 'launchWorker').mockRejectedValueOnce(
+      new Error('Docker Desktop daemon is stopped or not running (daemon offline).')
+    )
+
+    render(<InfraIsolationPanel infrastructure={mockSummary} runId="run_abc123" />)
+
+    const launchBtn = screen.getByTestId('btn-launch-worker')
+    fireEvent.click(launchBtn)
+
+    expect(await screen.findByTestId('worker-execution-error')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Docker Desktop daemon is stopped or unreachable/i)
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('btn-launch-fallback')).toBeInTheDocument()
   })
 })

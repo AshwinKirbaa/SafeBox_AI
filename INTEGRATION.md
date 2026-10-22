@@ -181,3 +181,69 @@ never execute or follow it. Show `limitations` next to every verdict.
 
 None to the agreed endpoint set. Additions beyond the original brief: the infrastructure POST endpoint,
 `result_type` discriminators, the `ABORTED` run state, `429`/`413` behaviours, and the optional worker token.
+
+---
+
+## Windows PowerShell Developer & Integration Workflow
+
+### 1. Worker Token Setup & Management
+
+SafeBox AI uses a cryptographically secure 256-bit token (`SAFEBOX_WORKER_TOKEN`) passed in the `X-Worker-Token` header.
+To ensure tokens are persistent across PowerShell sessions and never leaked into console output, history, or git commits:
+
+```powershell
+# Generate or verify secure token in backend/.env (and export to $env:SAFEBOX_WORKER_TOKEN)
+.\scripts\setup_worker_token.ps1
+
+# To rotate to a new token:
+.\scripts\setup_worker_token.ps1 -Rotate
+
+# To clear token (reverts to unauthenticated dev mode):
+.\scripts\setup_worker_token.ps1 -Clear
+```
+
+### 2. Backend Process & Port Management (Port 8000)
+
+Avoid `WinError 10048` port collisions using safe detection scripts that identify SafeBox AI processes before terminating:
+
+```powershell
+# Start or reuse backend (reuses healthy instance if already running)
+.\scripts\start_backend.ps1
+
+# Start in background as a daemon
+.\scripts\start_backend.ps1 -Background
+
+# Restart backend (terminates existing SafeBox backend cleanly, releases socket, reloads .env)
+.\scripts\start_backend.ps1 -Restart -Background
+
+# Stop running SafeBox backend gracefully
+.\scripts\stop_backend.ps1
+```
+
+### 3. Worker Execution & Verification
+
+The worker runner `worker/run_worker.ps1` supports array argument splatting, automatic token discovery (from parameter, `$env:SAFEBOX_WORKER_TOKEN`, or `backend/.env`), and token masking:
+
+```powershell
+# Local host isolation verification only (no backend submission, host check diagnostic):
+.\worker\run_worker.ps1 -LocalVerificationOnly
+
+# Live Docker integration end-to-end (auto-creates run or attaches to existing):
+.\worker\run_worker.ps1
+
+# Attach to a specific pre-existing backend run:
+.\worker\run_worker.ps1 -RunId run_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Rebuild worker Docker image:
+.\worker\run_worker.ps1 -BuildImage
+```
+
+### 4. End-to-End Verification Checklist
+
+1. Confirm Docker Desktop is running (`docker info`).
+2. Run `.\scripts\setup_worker_token.ps1` to ensure `backend/.env` has `SAFEBOX_WORKER_TOKEN`.
+3. Run `.\scripts\start_backend.ps1 -Restart -Background` to load the token.
+4. Run `.\worker\run_worker.ps1` to execute containerized isolation checks and submit to backend.
+5. Verify console output shows all 7 checks passed and `Infrastructure Status: PASS`.
+6. Open dashboard at `http://localhost:5173/` and verify the run displays `PASS (7/7)` on the Sandbox Isolation Panel.
+

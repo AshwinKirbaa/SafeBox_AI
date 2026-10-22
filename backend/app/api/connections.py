@@ -14,6 +14,8 @@ from fastapi import APIRouter, HTTPException, Path, Request
 
 from app.schemas import (
     ConnectionId,
+    ConnectionLiveVerifyRequest,
+    ConnectionLiveVerifyResponse,
     ConnectionTestRequest,
     ConnectionTestResponse,
     ModelCapabilitiesSchema,
@@ -23,6 +25,8 @@ from app.schemas import (
     SavedConnectionResponse,
     SavedConnectionUpdate,
     TargetConfig,
+    TokenUsageSummary,
+    RunRequest,
 )
 from app.services.model_adapter import ConnectionCheckResult
 from app.services.adapter_registry import SUPPORTED_PROVIDERS_META, AdapterRegistry
@@ -201,3 +205,104 @@ def discover_connection_models(
     )
     adapter = AdapterRegistry.create_adapter(request.app.state.settings, target_cfg, connection_data=conn)
     return adapter.discover_models(timeout_seconds=5.0)
+
+
+@router.post("/verify-live", response_model=ConnectionLiveVerifyResponse)
+def verify_live_connection(body: ConnectionLiveVerifyRequest, request: Request) -> ConnectionLiveVerifyResponse:
+    """Execute live end-to-end verification of a target or saved connection:
+    1. Resolve connection and credentials securely.
+    2. Check endpoint reachability and discover models.
+    3. Run a real adversarial security evaluation.
+    4. Persist the run and return live metrics (latency, token usage, verdict).
+    """
+    conn_data = None
+    if body.connection_id:
+        conn_data = request.app.state.db.get_connection(body.connection_id)
+        if not conn_data:
+            raise HTTPException(status_code=404, detail={"code": "connection_not_found", "message": "Connection not found."})
+
+    target_cfg = body.target or TargetConfig()
+    provider = (target_cfg.provider or (conn_data.get("provider") if conn_data else None) or "mock").lower()
+    model = body.model_override or target_cfg.model or (conn_data.get("model") if conn_data else None) or "default"
+    base_url = target_cfg.base_url or (conn_data.get("base_url") if conn_data else None)
+    api_key = target_cfg.api_key or (conn_data.get("api_key") if conn_data else None)
+
+    resolved_target = TargetConfig(
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+        connection_id=body.connection_id,
+        custom_headers=target_cfg.custom_headers or (conn_data.get("custom_headers") if conn_data else None),
+        request_template=target_cfg.request_template or (conn_data.get("request_template") if conn_data else None),
+        response_path=target_cfg.response_path or (conn_data.get("response_path") if conn_data else None),
+    )
+
+    try:
+        adapter = AdapterRegistry.create_adapter(
+            request.app.state.settings,
+            resolved_target,
+            connection_data=conn_data,
+        )
+        check = adapter.check_connection(timeout_seconds=5.0)
+    except Exception as exc:
+        return ConnectionLiveVerifyResponse(
+            connection_id=body.connection_id,
+            provider=provider,
+            model=model,
+            reachable=False,
+            model_available=False,
+            discovered_models=[],
+            inference_executed=False,
+            error_message=f"Connection check error: {exc}",
+        )
+
+    if not check.reachable or (check.error_message and not check.model_available):
+        return ConnectionLiveVerifyResponse(
+            connection_id=body.connection_id,
+            provider=provider,
+            model=model,
+            reachable=check.reachable,
+            model_available=check.model_available,
+            discovered_models=list(check.discovered_models),
+            inference_executed=False,
+            error_message=check.error_message or "Connection not reachable.",
+        )
+
+    # Reachability passed; now execute real inference and security evaluation
+    run_rec = request.app.state.runner.run(RunRequest(test_id=body.test_id, target=resolved_target))
+
+    tokens = None
+    if run_rec.result and run_rec.result.token_usage:
+        tokens = TokenUsageSummary(
+            prompt_tokens=run_rec.result.token_usage.prompt_tokens,
+            completion_tokens=run_rec.result.token_usage.completion_tokens,
+            total_tokens=run_rec.result.token_usage.total_tokens,
+        )
+
+    return ConnectionLiveVerifyResponse(
+        connection_id=body.connection_id,
+        provider=provider,
+        model=run_rec.target.model or model,
+        reachable=check.reachable,
+        model_available=check.model_available,
+        discovered_models=list(check.discovered_models),
+        inference_executed=True,
+        run_id=run_rec.run_id,
+        verdict=run_rec.result.status if run_rec.result else None,
+        observed_latency_ms=run_rec.result.observed_latency_ms if run_rec.result else None,
+        token_usage=tokens,
+        explanation=run_rec.result.explanation if run_rec.result else None,
+        error_message=None,
+    )
+
+
+@router.post("/{connection_id}/verify-live", response_model=ConnectionLiveVerifyResponse)
+def verify_saved_connection_live(
+    connection_id: Annotated[str, Path(pattern=r"^conn_[0-9a-f]{16,32}$")],
+    request: Request,
+    body: ConnectionLiveVerifyRequest | None = None,
+) -> ConnectionLiveVerifyResponse:
+    req = body or ConnectionLiveVerifyRequest()
+    req.connection_id = connection_id
+    return verify_live_connection(req, request)

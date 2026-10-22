@@ -87,10 +87,14 @@ class OllamaAdapter(ModelAdapter):
         try:
             with client.stream("POST", f"{self.base_url}/api/generate", json=payload,
                                timeout=self.timeout_seconds) as resp:
+                if resp.status_code == 404:
+                    raise TargetModelNotFoundError(
+                        f"Ollama returned HTTP 404. Ollama model '{self.model}' was not found on {self.base_url}. "
+                        f"The model may not be installed; install it manually (e.g. 'ollama pull {self.model}') "
+                        f"(SafeBox never downloads models)."
+                    )
                 if resp.status_code >= 400:
-                    hint = (" The model may not be installed; install it manually "
-                            "(SafeBox never downloads models).") if resp.status_code == 404 else ""
-                    raise TargetHTTPError(f"Ollama returned HTTP {resp.status_code}.{hint}")
+                    raise TargetHTTPError(f"Ollama returned HTTP {resp.status_code}.")
 
                 for chunk in resp.iter_bytes():
                     body.extend(chunk)

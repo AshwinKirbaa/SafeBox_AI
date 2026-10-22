@@ -111,7 +111,11 @@ class TargetAuthError(TargetError):
     kind = "authentication"
 
 
-class TargetModelNotFoundError(TargetError):
+class TargetHTTPError(TargetError):
+    kind = "http_error"
+
+
+class TargetModelNotFoundError(TargetHTTPError):
     kind = "model_not_found"
 
 
@@ -121,10 +125,6 @@ class TargetRateLimitError(TargetError):
 
 class TargetUnsupportedError(TargetError):
     kind = "unsupported"
-
-
-class TargetHTTPError(TargetError):
-    kind = "http_error"
 
 
 class TargetResponseError(TargetError):

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import ipaddress
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import urlparse
 
+import dotenv
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,7 +26,7 @@ def is_loopback_host(host: str) -> bool:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="SAFEBOX_", env_file=".env", env_file_encoding="utf-8",
+        env_prefix="SAFEBOX_", env_file=(".env", "backend/.env"), env_file_encoding="utf-8",
         extra="ignore", frozen=True,
     )
 

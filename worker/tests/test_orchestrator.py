@@ -133,3 +133,61 @@ def test_execute_and_submit_disallow_fallback_raises(tmp_path):
         with pytest.raises(RuntimeError, match="Docker is not available"):
             orchestrator.execute_and_submit(run_id=run_id, allow_fallback=False)
 
+
+def test_main_cli_returns_nonzero_on_failed_submissions():
+    from worker.orchestrator.docker_runner import main
+    mock_res = {
+        "mode": "container",
+        "docker_available": True,
+        "submissions": [
+            {"check_id": "docker-socket-absence", "status": "failed", "error": "401 Unauthorized"},
+            {"check_id": "non-root-execution", "status": "failed", "error": "401 Unauthorized"},
+        ],
+    }
+
+    test_args = ["docker_runner.py", "--run-id", "run_" + "5" * 32, "--token", "bad-token"]
+    with patch("sys.argv", test_args), \
+         patch.object(DockerSandboxOrchestrator, "execute_and_submit", return_value=mock_res):
+        exit_code = main()
+        assert exit_code == 1
+
+
+def test_main_cli_returns_zero_on_successful_submissions():
+    from worker.orchestrator.docker_runner import main
+    mock_res = {
+        "mode": "container",
+        "docker_available": True,
+        "submissions": [
+            {"check_id": "docker-socket-absence", "status": "created"},
+            {"check_id": "non-root-execution", "status": "created"},
+        ],
+    }
+
+    test_args = ["docker_runner.py", "--run-id", "run_" + "6" * 32, "--token", "good-token"]
+    with patch("sys.argv", test_args), \
+         patch.object(DockerSandboxOrchestrator, "execute_and_submit", return_value=mock_res):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_token_with_special_characters_forwarded_to_submitter():
+    special_token = "A+B/C==D E_F!@#$"
+    orchestrator = DockerSandboxOrchestrator(worker_token=special_token)
+    assert orchestrator.submitter.token == special_token
+    headers = orchestrator.submitter._headers()
+    assert headers["X-Worker-Token"] == special_token
+
+
+def test_find_env_token_from_env_file(tmp_path, monkeypatch):
+    from worker.config import find_env_token
+    monkeypatch.delenv("SAFEBOX_WORKER_TOKEN", raising=False)
+
+    fake_env = tmp_path / "backend" / ".env"
+    fake_env.parent.mkdir(parents=True, exist_ok=True)
+    fake_env.write_text("SAFEBOX_WORKER_TOKEN=SecretToken123+==\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    found = find_env_token()
+    assert found == "SecretToken123+=="
+
+

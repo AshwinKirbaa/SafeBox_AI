@@ -325,6 +325,7 @@ export const App: React.FC = () => {
             selectedRunId={selectedRunId}
             error={detailError}
             onRetry={handleRetryDetail}
+            onRefreshRun={fetchRunDetail}
           />
         </section>
 

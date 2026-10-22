@@ -1,3 +1,4 @@
+import socket
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -5,6 +6,26 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 from app.services.test_registry import CANARY, PROHIBITED_STRING
+
+
+@pytest.fixture(autouse=True)
+def mock_dns_resolution(monkeypatch):
+    orig_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        test_hosts = {
+            "api.openai.com": "93.184.216.34",
+            "api.anthropic.com": "93.184.216.35",
+            "generativelanguage.googleapis.com": "93.184.216.36",
+            "api-inference.huggingface.co": "93.184.216.37",
+            "api.example.com": "93.184.216.38",
+            "example.com": "93.184.216.39",
+        }
+        if host in test_hosts:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (test_hosts[host], port or 443))]
+        return orig_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
 
 @pytest.fixture

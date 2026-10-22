@@ -90,7 +90,26 @@ class OpenAIAdapter(OpenAICompatibleAdapter):
             ),
         )
 
+    def generate(self, request: TargetRequest) -> TargetResponse:
+        if not self.api_key or not self.api_key.strip():
+            raise TargetAuthError(
+                "OpenAI API key is missing. Configure an API key in Saved Connections "
+                "or set the OPENAI_API_KEY environment variable in backend/.env."
+            )
+        return super().generate(request)
+
+    def check_connection(self, timeout_seconds: float = 5.0) -> ConnectionCheckResult:
+        if not self.api_key or not self.api_key.strip():
+            return ConnectionCheckResult(
+                reachable=True,
+                model_available=False,
+                error_message="OpenAI API key is not configured. Configure an API key in Saved Connections or set the OPENAI_API_KEY environment variable in backend/.env.",
+            )
+        return super().check_connection(timeout_seconds=timeout_seconds)
+
     def discover_models(self, timeout_seconds: float = 5.0) -> list[str]:
+        if not self.api_key or not self.api_key.strip():
+            return self.KNOWN_MODELS
         discovered = super().discover_models(timeout_seconds)
         if discovered:
             return discovered
@@ -155,6 +174,12 @@ class AnthropicAdapter(ModelAdapter):
 
     def generate(self, request: TargetRequest) -> TargetResponse:
         self.validate_capabilities(request)
+
+        if not self.api_key or not self.api_key.strip():
+            raise TargetAuthError(
+                "Anthropic Claude API key is missing. Configure an API key in Saved Connections "
+                "or set the ANTHROPIC_API_KEY environment variable in backend/.env."
+            )
 
         endpoint = f"{self.base_url}/v1/messages"
         content: list[dict[str, Any]] = []
@@ -321,9 +346,13 @@ class GeminiAdapter(ModelAdapter):
 
     KNOWN_MODELS = [
         "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-pro",
         "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash-lite-preview-02-05",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-flash-latest",
+        "gemini-pro-latest",
     ]
 
     def __init__(
@@ -358,8 +387,20 @@ class GeminiAdapter(ModelAdapter):
     def generate(self, request: TargetRequest) -> TargetResponse:
         self.validate_capabilities(request)
 
-        endpoint = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
-        params = {"key": self.api_key} if self.api_key else {}
+        if not self.api_key or not self.api_key.strip():
+            raise TargetAuthError(
+                "Google Gemini API key is missing. Configure an API key in Saved Connections "
+                "or set the GEMINI_API_KEY environment variable in backend/.env."
+            )
+
+        # Normalize model ID: remove leading 'models/' if present so path is not duplicated
+        clean_model = self.model
+        if clean_model.startswith("models/"):
+            clean_model = clean_model[7:]
+
+        endpoint = f"{self.base_url}/v1beta/models/{clean_model}:generateContent"
+        params = {"key": self.api_key.strip()}
+        headers = {"x-goog-api-key": self.api_key.strip()}
 
         user_parts: list[dict[str, Any]] = [{"text": request.user_prompt}]
         if request.images:
@@ -388,20 +429,29 @@ class GeminiAdapter(ModelAdapter):
         client, owned = self._http()
         body = bytearray()
         try:
-            with client.stream("POST", endpoint, params=params, json=payload,
+            with client.stream("POST", endpoint, params=params, headers=headers, json=payload,
                                timeout=self.timeout_seconds) as resp:
-                if resp.status_code == 400 or resp.status_code == 403:
-                    data_preview = resp.read().decode("utf-8", errors="ignore")
-                    if "API_KEY_INVALID" in data_preview or "API key not valid" in data_preview:
-                        raise TargetAuthError("Gemini API key is invalid or unauthorized.")
-                    if resp.status_code == 403:
-                        raise TargetAuthError(f"Gemini API access denied (HTTP 403).")
-                if resp.status_code == 404:
-                    raise TargetModelNotFoundError(f"Gemini model '{self.model}' not found.")
-                if resp.status_code == 429:
-                    raise TargetRateLimitError("Gemini API quota/rate limit exceeded (HTTP 429).")
                 if resp.status_code >= 400:
-                    raise TargetHTTPError(f"Gemini API returned HTTP {resp.status_code}.")
+                    data_preview = resp.read().decode("utf-8", errors="ignore")
+                    error_msg = None
+                    try:
+                        err_json = json.loads(data_preview)
+                        if isinstance(err_json, dict) and "error" in err_json:
+                            error_msg = err_json["error"].get("message")
+                    except Exception:
+                        pass
+
+                    clean_err = sanitize_secrets_from_text(error_msg or data_preview)
+                    if resp.status_code in (400, 401, 403):
+                        if "API_KEY_INVALID" in data_preview or "API key not valid" in data_preview:
+                            raise TargetAuthError(clean_err or "Gemini API key is invalid or unauthorized.")
+                        if resp.status_code == 403:
+                            raise TargetAuthError(clean_err or "Gemini API access denied (HTTP 403).")
+                    if resp.status_code == 404:
+                        raise TargetModelNotFoundError(clean_err or f"Gemini model '{self.model}' not found.")
+                    if resp.status_code == 429:
+                        raise TargetRateLimitError(clean_err or "Gemini API quota/rate limit exceeded (HTTP 429).")
+                    raise TargetHTTPError(clean_err or f"Gemini API returned HTTP {resp.status_code}.")
 
                 for chunk in resp.iter_bytes():
                     body.extend(chunk)
@@ -464,6 +514,7 @@ class GeminiAdapter(ModelAdapter):
             resp = client.get(
                 f"{self.base_url}/v1beta/models",
                 params={"key": self.api_key},
+                headers={"x-goog-api-key": self.api_key},
                 timeout=timeout_seconds,
             )
             latency = int((time.perf_counter() - start) * 1000)
@@ -477,12 +528,17 @@ class GeminiAdapter(ModelAdapter):
             if resp.status_code == 200:
                 data = resp.json()
                 items = data.get("models", [])
-                raw_names = [m.get("name", "") for m in items if isinstance(m, dict)]
-                # Names are like "models/gemini-1.5-pro" -> clean to "gemini-1.5-pro"
+                gen_models = [
+                    m for m in items
+                    if isinstance(m, dict) and "generateContent" in m.get("supportedGenerationMethods", ["generateContent"])
+                ]
+                raw_names = [m.get("name", "") for m in gen_models if m.get("name")]
                 cleaned = [n.replace("models/", "") for n in raw_names if n]
+                clean_model = self.model.replace("models/", "")
+                model_avail = clean_model in cleaned or self.model in raw_names or clean_model in self.KNOWN_MODELS
                 return ConnectionCheckResult(
                     reachable=True,
-                    model_available=self.model in cleaned or f"models/{self.model}" in raw_names,
+                    model_available=model_avail,
                     latency_ms=latency,
                     discovered_models=tuple(cleaned or self.KNOWN_MODELS),
                     capabilities=self.capabilities,
@@ -508,13 +564,24 @@ class GeminiAdapter(ModelAdapter):
             return self.KNOWN_MODELS
         client, owned = self._http()
         try:
-            resp = client.get(f"{self.base_url}/v1beta/models", params={"key": self.api_key}, timeout=timeout_seconds)
+            resp = client.get(
+                f"{self.base_url}/v1beta/models",
+                params={"key": self.api_key},
+                headers={"x-goog-api-key": self.api_key},
+                timeout=timeout_seconds,
+            )
             if resp.status_code == 200:
-                raw_names = [m.get("name", "") for m in resp.json().get("models", [])]
+                items = resp.json().get("models", [])
+                gen_models = [
+                    m for m in items
+                    if isinstance(m, dict) and "generateContent" in m.get("supportedGenerationMethods", ["generateContent"])
+                ]
+                raw_names = [m.get("name", "") for m in gen_models if m.get("name")]
                 cleaned = [n.replace("models/", "") for n in raw_names if n]
                 return sorted(cleaned) if cleaned else self.KNOWN_MODELS
+            return self.KNOWN_MODELS
         except Exception:
-            pass
+            return self.KNOWN_MODELS
         finally:
             if owned:
                 client.close()
@@ -565,6 +632,12 @@ class HuggingFaceAdapter(ModelAdapter):
 
     def generate(self, request: TargetRequest) -> TargetResponse:
         self.validate_capabilities(request)
+
+        if not self.api_key or not self.api_key.strip():
+            raise TargetAuthError(
+                "Hugging Face API token is missing. Configure a token in Saved Connections "
+                "or set the HF_TOKEN environment variable in backend/.env."
+            )
 
         endpoint = f"{self.base_url}/{self.model}"
         combined_prompt = f"System: {request.system_prompt}\nUser: {request.user_prompt}\nAssistant:" if request.system_prompt else request.user_prompt
@@ -636,6 +709,12 @@ class HuggingFaceAdapter(ModelAdapter):
         )
 
     def check_connection(self, timeout_seconds: float = 5.0) -> ConnectionCheckResult:
+        if not self.api_key or not self.api_key.strip():
+            return ConnectionCheckResult(
+                reachable=True,
+                model_available=False,
+                error_message="Hugging Face API token is not configured. Configure a token in Saved Connections or set the HF_TOKEN environment variable in backend/.env.",
+            )
         start = time.perf_counter()
         client, owned = self._http()
         try:
@@ -754,6 +833,52 @@ class LlamaCppAdapter(OpenAICompatibleAdapter):
             ),
         )
 
+    def generate(self, request: TargetRequest) -> TargetResponse:
+        try:
+            return super().generate(request)
+        except (TargetModelNotFoundError, TargetHTTPError) as exc:
+            # Fallback to legacy llama.cpp /completion endpoint if /v1/chat/completions is 404
+            if isinstance(exc, TargetModelNotFoundError) or (isinstance(exc, TargetHTTPError) and "404" in str(exc)):
+                return self._generate_legacy_completion(request)
+            raise
+
+    def _generate_legacy_completion(self, request: TargetRequest) -> TargetResponse:
+        """Fallback for legacy llama-server exposing /completion instead of /v1/chat/completions."""
+        raw_base = self.base_url.removesuffix("/v1")
+        endpoint = f"{raw_base}/completion"
+        prompt = f"System: {request.system_prompt}\nUser: {request.user_prompt}\nAssistant:" if request.system_prompt else request.user_prompt
+        payload = {
+            "prompt": prompt,
+            "n_predict": max(16, self.max_response_chars // 4),
+            "temperature": request.temperature,
+        }
+        start = time.perf_counter()
+        client, owned = self._http()
+        try:
+            resp = client.post(endpoint, json=payload, headers=self._get_headers(), timeout=self.timeout_seconds)
+            if resp.status_code >= 400:
+                raise TargetHTTPError(f"llama.cpp /completion returned HTTP {resp.status_code}.")
+            data = resp.json()
+            text = data.get("content") or data.get("completion") or ""
+        except TargetError:
+            raise
+        except Exception as exc:
+            raise TargetResponseError(f"llama.cpp legacy /completion request failed: {exc}") from exc
+        finally:
+            if owned:
+                client.close()
+
+        text, truncated = clamp_output(text, self.max_response_chars)
+        latency = int((time.perf_counter() - start) * 1000)
+        return TargetResponse(
+            text=text,
+            truncated=truncated,
+            adapter=self.name,
+            model=self.model,
+            latency_ms=latency,
+            provider=self.provider,
+        )
+
 
 # --------------------------------------------------------------------------- #
 # 7. Local Hugging Face Transformers Pipeline Adapter
@@ -813,6 +938,14 @@ class TransformersPipelineAdapter(ModelAdapter):
         )
 
     def check_connection(self, timeout_seconds: float = 5.0) -> ConnectionCheckResult:
+        if self._pipeline is not None:
+            return ConnectionCheckResult(
+                reachable=True,
+                model_available=True,
+                latency_ms=0,
+                discovered_models=(self.model,),
+                capabilities=self.capabilities,
+            )
         try:
             import transformers  # noqa: F401
             return ConnectionCheckResult(

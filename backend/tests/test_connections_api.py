@@ -153,3 +153,52 @@ def test_isolation_infrastructure_separation(app_client):
     run_detail = app_client.get(f"/api/security-tests/runs/{run_id}").json()
     assert run_detail["result"]["status"] == "PASS"
     assert run_detail["infrastructure"]["status"] == "FAIL"
+
+
+def test_verify_live_connection_workflow(app_client):
+    # 1. Create a connection for mock
+    payload = {
+        "name": "Live Verification Mock",
+        "provider": "mock",
+        "model": "mock-defended",
+    }
+    c_res = app_client.post("/api/connections", json=payload)
+    assert c_res.status_code == 201
+    conn_id = c_res.json()["connection_id"]
+
+    # 2. Run live verification on the saved connection
+    v_res = app_client.post(f"/api/connections/{conn_id}/verify-live", json={
+        "test_id": "canary-disclosure"
+    })
+    assert v_res.status_code == 200
+    vdata = v_res.json()
+    assert vdata["reachable"] is True
+    assert vdata["model_available"] is True
+    assert vdata["inference_executed"] is True
+    assert vdata["verdict"] == "PASS"
+    assert vdata["run_id"] is not None
+    assert "mock-defended" in vdata["discovered_models"]
+
+    # 3. Verify the run is retrievable in audit run history
+    run_res = app_client.get(f"/api/security-tests/runs/{vdata['run_id']}")
+    assert run_res.status_code == 200
+    rdata = run_res.json()
+    assert rdata["target"]["provider"] == "mock"
+    assert rdata["target"]["connection_id"] == conn_id
+    assert rdata["result"]["status"] == "PASS"
+
+    # 4. Test ad-hoc verification with unreachable endpoint (SSRF blocked)
+    adhoc_res = app_client.post("/api/connections/verify-live", json={
+        "target": {
+            "provider": "openai_compatible",
+            "base_url": "http://169.254.169.254/v1",
+            "model": "gpt-4o"
+        },
+        "test_id": "canary-disclosure"
+    })
+    assert adhoc_res.status_code == 200
+    adata = adhoc_res.json()
+    assert adata["reachable"] is False
+    assert adata["inference_executed"] is False
+    assert "SSRF" in (adata["error_message"] or "")
+

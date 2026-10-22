@@ -188,3 +188,53 @@ def test_vulnerable_mock_fails_redacts_canary_and_coexists_with_all_seven_infra_
     # 7. Canary remains absent and redacted on subsequent retrieval
     assert "CANARY-SAFEBOX" not in client.get(f"/api/security-tests/runs/{run_id}").text
 
+
+def test_launch_worker_run_not_found(client):
+    ghost = "run_" + "e" * 32
+    r = client.post(f"/api/security-tests/runs/{ghost}/launch-worker")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "run_not_found"
+
+
+def test_launch_worker_docker_unavailable_error(client, monkeypatch):
+    from worker.orchestrator.docker_runner import DockerSandboxOrchestrator
+
+    rid = run(client).json()["run_id"]
+    monkeypatch.setattr(DockerSandboxOrchestrator, "is_docker_available", lambda *args: (False, "daemon stopped"))
+
+    r = client.post(f"/api/security-tests/runs/{rid}/launch-worker")
+    assert r.status_code == 503
+    assert r.json()["error"]["code"] == "docker_unavailable"
+    assert "daemon stopped" in r.json()["error"]["message"]
+
+
+def test_launch_worker_duplicate_running_rejected(client, monkeypatch):
+    rid = run(client).json()["run_id"]
+    app = client.app
+    if not hasattr(app.state, "active_infra_verifications"):
+        app.state.active_infra_verifications = set()
+    app.state.active_infra_verifications.add(rid)
+
+    try:
+        r = client.post(f"/api/security-tests/runs/{rid}/launch-worker")
+        assert r.status_code == 409
+        assert r.json()["error"]["code"] == "verification_already_running"
+    finally:
+        app.state.active_infra_verifications.discard(rid)
+
+
+def test_launch_worker_with_fallback(client, monkeypatch):
+    from worker.orchestrator.docker_runner import DockerSandboxOrchestrator
+
+    rid = run(client).json()["run_id"]
+    monkeypatch.setattr(DockerSandboxOrchestrator, "is_docker_available", lambda *args: (False, "daemon offline"))
+
+    # When allow_host_fallback is true, orchestrator runs local checks and submits all 7
+    r = client.post(f"/api/security-tests/runs/{rid}/launch-worker?allow_host_fallback=true")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["run_id"] == rid
+    assert len(data["infrastructure"]["checks"]) == 7
+    # Host fallback never claims container isolation PASS
+    assert data["infrastructure"]["status"] in ("UNAVAILABLE", "FAIL")
+

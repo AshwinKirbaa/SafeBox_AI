@@ -20,6 +20,7 @@ export interface RunDetailViewProps {
   selectedRunId?: string | null
   error?: string | null
   onRetry?: () => void
+  onRefreshRun?: (runId: string) => Promise<void> | void
 }
 
 export const RunDetailView: React.FC<RunDetailViewProps> = ({
@@ -28,6 +29,7 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
   selectedRunId,
   error,
   onRetry,
+  onRefreshRun,
 }) => {
   const [copiedId, setCopiedId] = useState(false)
 
@@ -84,13 +86,13 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
     setTimeout(() => setCopiedId(false), 2000)
   }
 
-  const isMockRun =
-    run.target.mode === 'mock' ||
-    run.target.provider === 'mock' ||
-    run.target.adapter === 'mock' ||
-    (typeof run.target.model === 'string' && run.target.model.startsWith('mock-'))
+  const isNonMock =
+    (run.target.provider && run.target.provider !== 'mock') ||
+    (run.target.adapter && run.target.adapter !== 'mock') ||
+    (run.target.mode && run.target.mode !== 'mock')
 
-  const isOllamaRun = !isMockRun && (run.target.mode === 'ollama' || run.target.provider === 'ollama')
+  const isMockRun = !isNonMock
+  const isOllamaRun = !isMockRun && (run.target.mode === 'ollama' || run.target.provider === 'ollama' || run.target.adapter === 'ollama')
 
   let targetLabel = 'MOCK SIMULATOR'
   if (isMockRun) {
@@ -98,8 +100,8 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
   } else if (isOllamaRun) {
     targetLabel = `OLLAMA · ${run.target.model || 'llama3.2:3b'}`
   } else {
-    const prov = (run.target.provider || run.target.mode).toUpperCase()
-    targetLabel = `${prov} · ${run.target.model}`
+    const prov = (run.target.provider || run.target.mode || run.target.adapter || 'REMOTE').toUpperCase()
+    targetLabel = `${prov} · ${run.target.model || ''}`
   }
 
   const tokenUsage = run.result?.token_usage
@@ -214,6 +216,11 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
         </div>
 
         <div className="meta-bar-right">
+          {run.result?.status === 'ERROR' && (
+            <span className="state-badge state-error mr-2" data-testid="lifecycle-exec-error-badge">
+              INFERENCE ERROR
+            </span>
+          )}
           <span className={`state-badge state-${run.state.toLowerCase()}`}>
             {run.state}
           </span>
@@ -255,6 +262,7 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
         <InfraIsolationPanel
           infrastructure={run.infrastructure}
           runId={run.run_id}
+          onRefreshRun={onRefreshRun}
         />
       </div>
     </div>

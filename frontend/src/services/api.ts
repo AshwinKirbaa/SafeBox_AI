@@ -11,6 +11,8 @@ import type {
   ConnectionUpdatePayload,
   ConnectionTestRequest,
   ConnectionTestResponse,
+  ConnectionLiveVerifyRequest,
+  ConnectionLiveVerifyResponse,
 } from '../types/safebox'
 
 const BASE_URL = ''
@@ -93,6 +95,21 @@ export const api = {
     return handleResponse<RunRecord>(res)
   },
 
+  async launchWorker(
+    runId: string,
+    allowHostFallback = false
+  ): Promise<RunRecord> {
+    const query = allowHostFallback ? '?allow_host_fallback=true' : ''
+    const res = await fetch(
+      `${BASE_URL}/api/security-tests/runs/${runId}/launch-worker${query}`,
+      {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      }
+    )
+    return handleResponse<RunRecord>(res)
+  },
+
   // Model Connections & Provider Discovery Endpoints
   async getProviders(): Promise<ProviderMeta[]> {
     const res = await fetch(`${BASE_URL}/api/connections/providers`, {
@@ -161,5 +178,19 @@ export const api = {
       headers: { Accept: 'application/json' },
     })
     return handleResponse<string[]>(res)
+  },
+
+  async verifyConnectionLive(
+    data: ConnectionLiveVerifyRequest
+  ): Promise<ConnectionLiveVerifyResponse> {
+    const res = await fetch(`${BASE_URL}/api/connections/verify-live`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(data),
+    })
+    return handleResponse<ConnectionLiveVerifyResponse>(res)
   },
 }

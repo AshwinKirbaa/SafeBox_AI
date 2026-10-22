@@ -307,3 +307,138 @@ def test_unsupported_modality_raises_clear_error():
     req_tool = TargetRequest(system_prompt="sys", user_prompt="user", tools=({"name": "wipe"},))
     with pytest.raises(TargetUnsupportedError, match="does not support tool calling"):
         adapter.generate(req_tool)
+
+
+# --------------------------------------------------------------------------- #
+# 8. OpenAI Adapter Contract Tests
+# --------------------------------------------------------------------------- #
+def test_openai_adapter_missing_key_upfront():
+    adapter = OpenAIAdapter(api_key=None)
+    with pytest.raises(TargetAuthError, match="OpenAI API key is missing"):
+        adapter.generate(TargetRequest("sys", "user"))
+
+    check = adapter.check_connection()
+    assert check.reachable is True
+    assert check.model_available is False
+    assert "OpenAI API key is not configured" in (check.error_message or "")
+
+
+def test_openai_adapter_success_and_tokens():
+    def handler(req):
+        assert req.url.path == "/v1/chat/completions"
+        assert req.headers["authorization"] == "Bearer sk-test-openai"
+        return httpx.Response(200, json={
+            "choices": [{"message": {"role": "assistant", "content": "I cannot provide security overrides."}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18},
+        })
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = OpenAIAdapter(api_key="sk-test-openai", model="gpt-4o-mini", client=client)
+    res = adapter.generate(TargetRequest("sys", "user"))
+    assert res.text == "I cannot provide security overrides."
+    assert res.token_usage is not None
+    assert res.token_usage.total_tokens == 18
+    assert res.provider == "openai"
+
+
+# --------------------------------------------------------------------------- #
+# 9. vLLM Adapter Contract Tests
+# --------------------------------------------------------------------------- #
+def test_vllm_adapter_allows_localhost_and_chat_format():
+    seen = {}
+
+    def handler(req):
+        seen["url"] = str(req.url)
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"role": "assistant", "content": "vLLM high throughput output"}}],
+            "usage": {"prompt_tokens": 25, "completion_tokens": 12, "total_tokens": 37},
+        })
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = VLLMAdapter(
+        base_url="http://127.0.0.1:8000/v1",
+        model="meta-llama/Llama-3.2-3B-Instruct",
+        client=client,
+    )
+    res = adapter.generate(TargetRequest("sys instruction", "user query"))
+    assert res.text == "vLLM high throughput output"
+    assert res.provider == "vllm"
+    assert "127.0.0.1:8000/v1/chat/completions" in seen["url"]
+    assert seen["body"]["model"] == "meta-llama/Llama-3.2-3B-Instruct"
+
+
+# --------------------------------------------------------------------------- #
+# 10. llama.cpp Server Adapter Contract Tests
+# --------------------------------------------------------------------------- #
+def test_llamacpp_adapter_chat_completions_success():
+    def handler(req):
+        assert req.url.path == "/v1/chat/completions"
+        return httpx.Response(200, json={
+            "choices": [{"message": {"role": "assistant", "content": "llama.cpp modern output"}}],
+        })
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = LlamaCppAdapter(base_url="http://127.0.0.1:8080/v1", client=client)
+    res = adapter.generate(TargetRequest("sys", "user"))
+    assert res.text == "llama.cpp modern output"
+    assert res.provider == "llamacpp"
+
+
+def test_llamacpp_adapter_legacy_completion_fallback():
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        if req.url.path == "/v1/chat/completions":
+            return httpx.Response(404, json={"error": {"message": "Not Found"}})
+        if req.url.path == "/completion":
+            body = json.loads(req.content)
+            assert "prompt" in body
+            return httpx.Response(200, json={"content": "llama.cpp legacy output"})
+        return httpx.Response(500)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = LlamaCppAdapter(base_url="http://127.0.0.1:8080/v1", client=client)
+    res = adapter.generate(TargetRequest("sys", "user"))
+    assert res.text == "llama.cpp legacy output"
+    assert "/v1/chat/completions" in calls
+    assert "/completion" in calls
+
+
+# --------------------------------------------------------------------------- #
+# 11. Transformers Pipeline Adapter Tests
+# --------------------------------------------------------------------------- #
+def test_transformers_pipeline_adapter_with_injected_pipeline():
+    mock_pipeline_called = {}
+
+    def fake_pipeline(prompt, max_new_tokens=100):
+        mock_pipeline_called["prompt"] = prompt
+        mock_pipeline_called["max_new_tokens"] = max_new_tokens
+        return [{"generated_text": "Local neural model reply"}]
+
+    adapter = TransformersPipelineAdapter(model="gpt2", pipeline_instance=fake_pipeline)
+    res = adapter.generate(TargetRequest("system directive", "user probe"))
+    assert res.text == "Local neural model reply"
+    assert "user probe" in mock_pipeline_called["prompt"]
+    assert res.provider == "transformers"
+
+    check = adapter.check_connection()
+    assert check.reachable is True
+    assert check.model_available is True
+    assert check.discovered_models == ("gpt2",)
+
+
+def test_transformers_pipeline_adapter_missing_library():
+    import sys
+    from unittest.mock import patch
+
+    adapter = TransformersPipelineAdapter(model="gpt2", pipeline_instance=None)
+    with patch.dict(sys.modules, {"transformers": None}):
+        with pytest.raises(TargetUnsupportedError, match="transformers.*not installed"):
+            adapter.generate(TargetRequest("sys", "user"))
+
+        check = adapter.check_connection()
+        assert check.reachable is False
+        assert "not installed" in (check.error_message or "")
+

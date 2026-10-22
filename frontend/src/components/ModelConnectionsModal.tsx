@@ -10,12 +10,15 @@ import {
   Eye,
   EyeOff,
   Zap,
+  ShieldCheck,
 } from 'lucide-react'
 import { api } from '../services/api'
 import type {
   ProviderMeta,
   SavedConnection,
   ConnectionTestResponse,
+  ConnectionLiveVerifyResponse,
+  ConnectionLiveVerifyRequest,
 } from '../types/safebox'
 
 interface ModelConnectionsModalProps {
@@ -47,6 +50,11 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
   const [testing, setTesting] = useState<boolean>(false)
   const [testResult, setTestResult] = useState<ConnectionTestResponse | null>(null)
   const [saving, setSaving] = useState<boolean>(false)
+
+  // Live verification state
+  const [verifying, setVerifying] = useState<boolean>(false)
+  const [verifyingId, setVerifyingId] = useState<string | null>(null)
+  const [liveVerifyResult, setLiveVerifyResult] = useState<ConnectionLiveVerifyResponse | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
@@ -87,6 +95,7 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
       if (meta.default_base_url && !baseUrl) setBaseUrl(meta.default_base_url)
     }
     setTestResult(null)
+    setLiveVerifyResult(null)
   }
 
   const handleStartEdit = (conn: SavedConnection) => {
@@ -97,6 +106,7 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
     setBaseUrl(conn.base_url || '')
     setApiKey('') // Never expose stored key; entering text updates it
     setTestResult(null)
+    setLiveVerifyResult(null)
   }
 
   const handleCancelEdit = () => {
@@ -106,11 +116,13 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
     setBaseUrl('')
     setApiKey('')
     setTestResult(null)
+    setLiveVerifyResult(null)
   }
 
   const handleTest = async () => {
     setTesting(true)
     setTestResult(null)
+    setLiveVerifyResult(null)
     try {
       const res = await api.testConnection({
         provider,
@@ -128,6 +140,41 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
       })
     } finally {
       setTesting(false)
+    }
+  }
+
+  const handleLiveVerify = async (connId?: string) => {
+    setVerifying(true)
+    setVerifyingId(connId || null)
+    setLiveVerifyResult(null)
+    setTestResult(null)
+    setError(null)
+    try {
+      let payload: ConnectionLiveVerifyRequest
+      if (connId) {
+        payload = { connection_id: connId, test_id: 'canary-disclosure' }
+      } else {
+        payload = {
+          connection_id: editingId || undefined,
+          target: {
+            provider,
+            model: model.trim() || undefined,
+            base_url: baseUrl.trim() || undefined,
+            api_key: apiKey.trim() || undefined,
+          },
+          test_id: 'canary-disclosure',
+        }
+      }
+      const res = await api.verifyConnectionLive(payload)
+      setLiveVerifyResult(res)
+      if (res.inference_executed) {
+        onConnectionsChanged()
+      }
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setVerifying(false)
+      setVerifyingId(null)
     }
   }
 
@@ -313,7 +360,7 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                 type="button"
                 className="btn-secondary btn-sm"
                 onClick={handleTest}
-                disabled={testing}
+                disabled={testing || verifying}
               >
                 {testing ? (
                   <>
@@ -324,6 +371,26 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                   <>
                     <Zap className="icon-xs text-amber" />
                     Test Connection & Discover
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => handleLiveVerify()}
+                disabled={verifying || testing || !model.trim()}
+                title="Execute real inference and run security evaluation"
+              >
+                {verifying && !verifyingId ? (
+                  <>
+                    <RefreshCw className="icon-xs spin" />
+                    Running Live Verification...
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="icon-xs text-emerald" />
+                    Live Audit & Verify
                   </>
                 )}
               </button>
@@ -347,6 +414,56 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Live Verification Feedback Banner */}
+            {liveVerifyResult && (
+              <div
+                className={`test-result-banner mt-3 ${
+                  liveVerifyResult.verdict === 'PASS'
+                    ? 'result-success'
+                    : liveVerifyResult.verdict === 'FAIL' || liveVerifyResult.error_message
+                    ? 'result-failure'
+                    : 'result-inconclusive'
+                }`}
+              >
+                <div className="result-header">
+                  {liveVerifyResult.verdict === 'PASS' ? (
+                    <CheckCircle className="result-icon text-emerald" />
+                  ) : (
+                    <AlertCircle className="result-icon text-amber" />
+                  )}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <strong>
+                        Live Verification: {liveVerifyResult.provider.toUpperCase()} · {liveVerifyResult.model}
+                      </strong>
+                      {liveVerifyResult.verdict && (
+                        <span className={`badge-pill badge-${liveVerifyResult.verdict.toLowerCase()}`}>
+                          {liveVerifyResult.verdict}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs mt-1">
+                      {liveVerifyResult.inference_executed ? (
+                        <span>
+                          Real inference verified · Latency: {liveVerifyResult.observed_latency_ms ?? 0}ms
+                          {liveVerifyResult.token_usage?.total_tokens &&
+                            ` · Tokens: ${liveVerifyResult.token_usage.total_tokens}`}
+                          {liveVerifyResult.run_id && ` · Run: ${liveVerifyResult.run_id}`}
+                        </span>
+                      ) : (
+                        <span className="text-red">
+                          {liveVerifyResult.error_message || 'Endpoint unreachable or authentication failed.'}
+                        </span>
+                      )}
+                    </div>
+                    {liveVerifyResult.explanation && (
+                      <p className="text-xs text-muted mt-1">{liveVerifyResult.explanation}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Live Test Feedback Banner */}
             {testResult && (
@@ -432,6 +549,24 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                         <span className="provider-pill ml-2">{c.provider}</span>
                       </div>
                       <div className="conn-card-actions">
+                        <button
+                          className="btn-ghost-sm text-xs mr-2"
+                          onClick={() => handleLiveVerify(c.connection_id)}
+                          disabled={verifying && verifyingId === c.connection_id}
+                          title="Run live inference and security evaluation on this saved connection"
+                        >
+                          {verifying && verifyingId === c.connection_id ? (
+                            <>
+                              <RefreshCw className="icon-xs spin mr-1" />
+                              Verifying...
+                            </>
+                          ) : (
+                            <>
+                              <ShieldCheck className="icon-xs text-emerald mr-1" />
+                              Verify Live
+                            </>
+                          )}
+                        </button>
                         <button
                           className="btn-icon-mini"
                           onClick={() => handleStartEdit(c)}

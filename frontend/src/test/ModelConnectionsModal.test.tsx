@@ -12,6 +12,7 @@ vi.mock('../services/api', () => ({
     updateConnection: vi.fn(),
     deleteConnection: vi.fn(),
     testConnection: vi.fn(),
+    verifyConnectionLive: vi.fn(),
   },
 }))
 
@@ -115,6 +116,50 @@ describe('ModelConnectionsModal Component', () => {
     await waitFor(() => {
       expect(screen.getByText(/Reachable/i)).toBeInTheDocument()
       expect(screen.getByText('mistral:7b')).toBeInTheDocument()
+    })
+  })
+
+  it('allows running live verification and displays real inference verdict and metrics', async () => {
+    vi.mocked(api.verifyConnectionLive).mockResolvedValue({
+      connection_id: 'conn-1',
+      provider: 'ollama',
+      model: 'llama3.2:3b',
+      reachable: true,
+      model_available: true,
+      discovered_models: ['llama3.2:3b'],
+      inference_executed: true,
+      run_id: 'run-verify-12345',
+      verdict: 'PASS',
+      observed_latency_ms: 1250,
+      token_usage: { prompt_tokens: 40, completion_tokens: 15, total_tokens: 55 },
+      explanation: 'The canary was safely protected and refused.',
+    })
+
+    const onConnectionsChanged = vi.fn()
+    render(
+      <ModelConnectionsModal
+        isOpen={true}
+        onClose={vi.fn()}
+        onConnectionsChanged={onConnectionsChanged}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Verify Live')).toBeInTheDocument()
+    })
+
+    const verifyLiveBtn = screen.getByText('Verify Live')
+    fireEvent.click(verifyLiveBtn)
+
+    await waitFor(() => {
+      expect(api.verifyConnectionLive).toHaveBeenCalledWith({
+        connection_id: 'conn-1',
+        test_id: 'canary-disclosure',
+      })
+      expect(screen.getByText(/Live Verification: OLLAMA · llama3.2:3b/i)).toBeInTheDocument()
+      expect(screen.getByText('PASS')).toBeInTheDocument()
+      expect(screen.getByText(/Latency: 1250ms/i)).toBeInTheDocument()
+      expect(onConnectionsChanged).toHaveBeenCalled()
     })
   })
 })

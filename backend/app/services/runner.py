@@ -63,6 +63,10 @@ class InvalidRunOptions(RunnerError):
     code, http_status = "invalid_options", 422
 
 
+class ConnectionNotFoundError(RunnerError):
+    code, http_status = "connection_not_found", 404
+
+
 class RunnerBusy(RunnerError):
     code, http_status = "runner_busy", 429
 
@@ -99,29 +103,49 @@ class SecurityTestRunner:
         conn_data = None
         if request.target.connection_id:
             conn_data = self.db.get_connection(request.target.connection_id)
-            if conn_data:
-                target_dict = request.target.model_dump()
-                if not target_dict.get("provider") and conn_data.get("provider"):
-                    target_dict["provider"] = conn_data["provider"]
-                if not target_dict.get("model") and conn_data.get("model"):
-                    target_dict["model"] = conn_data["model"]
-                if not target_dict.get("base_url") and conn_data.get("base_url"):
-                    target_dict["base_url"] = conn_data["base_url"]
-                if not target_dict.get("api_key") and conn_data.get("api_key"):
-                    target_dict["api_key"] = conn_data["api_key"]
-                if not target_dict.get("custom_headers") and conn_data.get("custom_headers"):
-                    target_dict["custom_headers"] = conn_data["custom_headers"]
-                if not target_dict.get("request_template") and conn_data.get("request_template"):
-                    target_dict["request_template"] = conn_data["request_template"]
-                if not target_dict.get("response_path") and conn_data.get("response_path"):
-                    target_dict["response_path"] = conn_data["response_path"]
-                request = RunRequest(
-                    test_id=request.test_id,
-                    target=TargetConfig(**target_dict),
-                    options=request.options,
-                )
+            if not conn_data:
+                raise ConnectionNotFoundError(f"Saved connection '{request.target.connection_id}' was not found.")
+            target_dict = request.target.model_dump()
+            if not target_dict.get("provider") and conn_data.get("provider"):
+                target_dict["provider"] = conn_data["provider"]
+            if not target_dict.get("model") and conn_data.get("model"):
+                target_dict["model"] = conn_data["model"]
+            if not target_dict.get("base_url") and conn_data.get("base_url"):
+                target_dict["base_url"] = conn_data["base_url"]
+            if not target_dict.get("api_key") and conn_data.get("api_key"):
+                target_dict["api_key"] = conn_data["api_key"]
+            if not target_dict.get("custom_headers") and conn_data.get("custom_headers"):
+                target_dict["custom_headers"] = conn_data["custom_headers"]
+            if not target_dict.get("request_template") and conn_data.get("request_template"):
+                target_dict["request_template"] = conn_data["request_template"]
+            if not target_dict.get("response_path") and conn_data.get("response_path"):
+                target_dict["response_path"] = conn_data["response_path"]
 
-        mode = request.target.mode or self.settings.target_mode
+            conn_provider = target_dict.get("provider")
+            if conn_provider and conn_provider != "mock":
+                if target_dict.get("mode") in (None, TargetMode.mock, "mock", TargetMode.connection, "connection"):
+                    if conn_provider in TargetMode.__members__:
+                        target_dict["mode"] = TargetMode(conn_provider)
+                    else:
+                        target_dict["mode"] = conn_provider
+                target_dict["mock_behavior"] = None
+
+            request = RunRequest(
+                test_id=request.test_id,
+                target=TargetConfig(**target_dict),
+                options=request.options,
+            )
+
+        effective_provider = request.target.provider or (conn_data.get("provider") if conn_data else None)
+        mode = request.target.mode
+        if (mode is None or mode in (TargetMode.mock, TargetMode.connection)) and effective_provider and effective_provider != "mock":
+            if effective_provider in TargetMode.__members__:
+                mode = TargetMode(effective_provider)
+            else:
+                mode = effective_provider
+        elif mode is None:
+            mode = self.settings.target_mode
+
         if mode == TargetMode.ollama and not (
             self.settings.target_mode == TargetMode.ollama or self.settings.allow_ollama_target
         ):
@@ -154,21 +178,28 @@ class SecurityTestRunner:
         is_remote = getattr(adapter, "is_remote", False)
         capabilities_dict = adapter.capabilities.to_dict() if hasattr(adapter, "capabilities") else None
 
+        effective_mode = mode
+        if (effective_mode == TargetMode.mock or effective_mode == "mock") and provider_name != "mock":
+            if provider_name in TargetMode.__members__:
+                effective_mode = TargetMode(provider_name)
+            else:
+                effective_mode = provider_name
+
         raw = RawRunData(
             run_id=run_id, state=RunState.RUNNING, test_id=case.test_id, test_name=case.name,
             test_version=case.version, expected_behavior=case.expected_behavior,
             target=TargetInfo(
-                mode=mode, adapter=adapter.name, model=adapter.model,
+                mode=effective_mode, adapter=adapter.name, model=adapter.model,
                 provider=provider_name,
                 is_remote=is_remote,
                 capabilities=capabilities_dict,
                 connection_id=request.target.connection_id,
-                mock_behavior=request.target.mock_behavior if mode == TargetMode.mock else None),
+                mock_behavior=request.target.mock_behavior if (effective_mode == TargetMode.mock and provider_name == "mock") else None),
             created_at=utc_now(),
         )
         self.db.create_run(raw)
         logger.info("run started run_id=%s test=%s mode=%s provider=%s", run_id, case.test_id,
-                    mode.value if hasattr(mode, "value") else mode, provider_name)
+                    effective_mode.value if hasattr(effective_mode, "value") else effective_mode, provider_name)
         try:
             self._evaluate(raw, case, base, adapter, request.options.repeat_count, request)
             raw.state = RunState.COMPLETED

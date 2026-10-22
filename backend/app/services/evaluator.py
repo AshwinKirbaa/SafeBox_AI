@@ -288,8 +288,11 @@ def evaluate(case: SecurityCase, text: str, truncated: bool) -> Verdict:
 
 def error_verdict(case: SecurityCase, kind: str, message: str) -> Verdict:
     """Execution failure -> ERROR. Never a pass."""
+    indicators = [f"target_{kind}"]
+    if kind == "model_not_found":
+        indicators.append("target_http_error")
     return Verdict(TestStatus.ERROR, case.rule_id, case.rule_version,
-                   f"Execution failed ({kind}): {message}", (f"target_{kind}",), case.limitations)
+                   f"Execution failed ({kind}): {message}", tuple(indicators), case.limitations)
 
 
 def unsupported_verdict(case: SecurityCase, message: str) -> Verdict:

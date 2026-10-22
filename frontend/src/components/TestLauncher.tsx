@@ -78,8 +78,13 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
   const [repeatBaseTest, setRepeatBaseTest] = useState<string>('canary-disclosure')
   const [showDetails, setShowDetails] = useState<boolean>(false)
 
+  const effectiveConnectionId =
+    selectedConnectionId && connections.some((c) => c.connection_id === selectedConnectionId)
+      ? selectedConnectionId
+      : connections[0]?.connection_id || ''
+
   const currentTest = tests.find((t) => t.test_id === selectedTestId) || tests[0]
-  const activeSavedConn = connections.find((c) => c.connection_id === selectedConnectionId)
+  const activeSavedConn = connections.find((c) => c.connection_id === effectiveConnectionId)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,13 +99,15 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
     } else if (targetMode === 'ollama') {
       targetPayload.model = ollamaModel.trim() || 'llama3.2:3b'
     } else if (targetMode === 'connection') {
-      if (activeSavedConn) {
-        targetPayload = {
-          connection_id: activeSavedConn.connection_id,
-          provider: activeSavedConn.provider,
-          model: activeSavedConn.model,
-          base_url: activeSavedConn.base_url || undefined,
-        }
+      if (!activeSavedConn) {
+        return
+      }
+      targetPayload = {
+        mode: activeSavedConn.provider as TargetMode,
+        connection_id: activeSavedConn.connection_id,
+        provider: activeSavedConn.provider,
+        model: activeSavedConn.model,
+        base_url: activeSavedConn.base_url || undefined,
       }
     }
 
@@ -237,7 +244,7 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
               <select
                 id="behavior-select"
                 className="form-select"
-                value={selectedConnectionId}
+                value={effectiveConnectionId}
                 onChange={(e) => setSelectedConnectionId(e.target.value)}
                 disabled={isRunning}
               >
@@ -394,7 +401,7 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
           <button
             type="submit"
             className={`btn-primary ${isRunning ? 'btn-loading' : ''}`}
-            disabled={isRunning || loadingTests || (targetMode === 'connection' && !selectedConnectionId)}
+            disabled={isRunning || loadingTests || (targetMode === 'connection' && !effectiveConnectionId)}
             data-testid="run-test-button"
           >
             {isRunning ? (

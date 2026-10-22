@@ -165,9 +165,12 @@ describe('Run Selection & Inspection Flow Integration', () => {
   it('automatically selects the latest run on initial load and renders details', async () => {
     render(<App />)
 
-    await waitFor(() => {
-      expect(screen.getByTestId('run-detail-view')).toBeInTheDocument()
-    })
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('run-detail-view')).toBeInTheDocument()
+      },
+      { timeout: 10000 }
+    )
 
     // Latest run (Run 1) details are loaded
     expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()

@@ -312,3 +312,27 @@ export interface ApiErrorResponse {
     details?: ApiErrorDetail[]
   }
 }
+
+export interface ConnectionLiveVerifyRequest {
+  connection_id?: string
+  target?: TargetConfig
+  test_id?: string
+  model_override?: string
+}
+
+export interface ConnectionLiveVerifyResponse {
+  connection_id?: string | null
+  provider: string
+  model: string
+  reachable: boolean
+  model_available?: boolean | null
+  discovered_models: string[]
+  inference_executed: boolean
+  run_id?: string | null
+  verdict?: AiTestStatus | null
+  observed_latency_ms?: number | null
+  token_usage?: TokenUsageSummary | null
+  explanation?: string | null
+  error_message?: string | null
+}
+

@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+from ..config import find_env_token
 from ..models import CheckStatus, InfraCheckSubmission, IsolationCheckResult
 from ..submitter import InfraSubmitter
 
@@ -35,15 +36,16 @@ class DockerSandboxOrchestrator:
         worker_token: str | None = None,
         image_tag: str = "safebox-worker:latest",
         workspaces_base_dir: str | None = None,
+        submitter: InfraSubmitter | None = None,
     ):
         self.backend_url = backend_url.rstrip("/")
-        self.worker_token = worker_token
+        self.worker_token = worker_token or find_env_token()
         self.image_tag = image_tag
         self.workspaces_base_dir = (
             Path(workspaces_base_dir) if workspaces_base_dir
             else Path(tempfile.gettempdir()) / "safebox_workspaces"
         )
-        self.submitter = InfraSubmitter(backend_url=self.backend_url, token=self.worker_token)
+        self.submitter = submitter or InfraSubmitter(backend_url=self.backend_url, token=self.worker_token)
 
     @staticmethod
     def _ensure_docker_in_path() -> None:
@@ -270,6 +272,7 @@ def main() -> int:
         image_tag=args.image_tag,
     )
     res = orchestrator.execute_and_submit(run_id=args.run_id, worker_id=args.worker_id)
+    failed_submissions = [s for s in res.get("submissions", []) if s.get("status") == "failed"]
     if args.json:
         print(json.dumps(res, indent=2))
     else:
@@ -279,7 +282,18 @@ def main() -> int:
             print(f"Note: {res.get('docker_reason')}")
         print(f"Submissions: {len(res['submissions'])} checks posted to {args.backend_url}")
         for s in res['submissions']:
-            print(f"  Check '{s.get('check_id')}': {s.get('status')}")
+            status_val = s.get('status')
+            err_val = f": {s.get('error')}" if s.get('error') else ""
+            print(f"  Check '{s.get('check_id')}': {status_val}{err_val}")
+
+    if failed_submissions:
+        print(f"\n[ERROR] {len(failed_submissions)} of {len(res.get('submissions', []))} check submissions failed!", file=sys.stderr)
+        return 1
+
+    if not res.get("submissions"):
+        print("\n[ERROR] No check submissions were generated or posted.", file=sys.stderr)
+        return 1
+
     return 0
 
 

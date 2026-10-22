@@ -75,8 +75,33 @@ def _ts(value) -> str:
 class Database:
     def __init__(self, path: str) -> None:
         self.path = path
-        # In-memory secure credential vault (never persisted in plaintext to SQLite)
+        # Secure credential vault (persisted locally in protected file, never plaintext in SQLite)
         self._secrets_vault: dict[str, str] = {}
+        self._load_vault()
+
+    def _vault_file(self) -> Path | None:
+        if self.path == ":memory:":
+            return None
+        return Path(self.path).parent / ".vault.json"
+
+    def _load_vault(self) -> None:
+        vf = self._vault_file()
+        if vf and vf.exists():
+            try:
+                data = json.loads(vf.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._secrets_vault.update(data)
+            except Exception:
+                pass
+
+    def _save_vault(self) -> None:
+        vf = self._vault_file()
+        if vf:
+            try:
+                vf.parent.mkdir(parents=True, exist_ok=True)
+                vf.write_text(json.dumps(self._secrets_vault), encoding="utf-8")
+            except Exception:
+                pass
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -212,6 +237,11 @@ class Database:
         except sqlite3.IntegrityError as exc:
             raise DuplicateInfraResult from exc
 
+    def clear_infra_checks(self, run_id: str) -> int:
+        with self._conn() as c:
+            cur = c.execute("DELETE FROM infra_checks WHERE run_id = ?", (run_id,))
+            return cur.rowcount
+
     def infra_summary(self, run_id: str) -> InfrastructureSummary:
         with self._conn() as c:
             rows = c.execute(
@@ -246,6 +276,7 @@ class Database:
 
         if api_key:
             self._secrets_vault[conn_id] = api_key
+            self._save_vault()
 
         config_data = {
             "custom_headers": custom_headers,
@@ -295,18 +326,14 @@ class Database:
         conn_id, name, provider, model, base_url, has_key, masked_key, cfg_str, created_at, updated_at = row
         cfg = json.loads(cfg_str) if cfg_str else {}
 
-        # Resolve api_key from in-memory vault or environment variables
+        # Resolve api_key from in-memory vault, environment variables, or local .env
         secret = self._secrets_vault.get(conn_id)
         if not secret:
-            env_var_map = {
-                "openai": "OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
-                "gemini": "GEMINI_API_KEY",
-                "huggingface": "HF_TOKEN",
-            }
-            env_name = env_var_map.get(provider.lower())
-            if env_name:
-                secret = os.environ.get(env_name)
+            self._load_vault()
+            secret = self._secrets_vault.get(conn_id)
+        if not secret:
+            from app.services.adapter_registry import resolve_api_key
+            secret = resolve_api_key(provider)
 
         return {
             "connection_id": conn_id,
@@ -355,6 +382,7 @@ class Database:
 
     def delete_connection(self, connection_id: str) -> bool:
         self._secrets_vault.pop(connection_id, None)
+        self._save_vault()
         with self._conn() as c:
             cur = c.execute("DELETE FROM connections WHERE connection_id = ?", (connection_id,))
             return cur.rowcount > 0

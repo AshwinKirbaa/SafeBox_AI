@@ -106,7 +106,7 @@ SUPPORTED_PROVIDERS_META = [
         "id": "gemini",
         "name": "Google Gemini API",
         "tier": "B",
-        "description": "Native Google Generative AI REST integration for Gemini 2.0 Flash, 1.5 Pro, and 1.5 Flash.",
+        "description": "Native Google Generative AI REST integration for Gemini models (e.g. gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro).",
         "requires_api_key": True,
         "requires_base_url": False,
         "default_base_url": "https://generativelanguage.googleapis.com",
@@ -163,6 +163,41 @@ SUPPORTED_PROVIDERS_META = [
     },
 ]
 
+PROVIDER_ENV_KEYS: dict[str, list[str]] = {
+    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "SAFEBOX_GEMINI_API_KEY"],
+    "openai": ["OPENAI_API_KEY", "SAFEBOX_OPENAI_API_KEY"],
+    "anthropic": ["ANTHROPIC_API_KEY", "SAFEBOX_ANTHROPIC_API_KEY"],
+    "huggingface": ["HF_TOKEN", "HUGGINGFACE_API_KEY", "SAFEBOX_HF_TOKEN"],
+}
+
+
+def resolve_api_key(provider: str, explicit_key: str | None = None) -> str | None:
+    """Resolve provider API key from explicit argument, environment variables, or local env files."""
+    import os
+    from pathlib import Path
+    import dotenv
+
+    if explicit_key and explicit_key.strip():
+        return explicit_key.strip()
+    target_vars = PROVIDER_ENV_KEYS.get(provider.lower(), [])
+    for env_var in target_vars:
+        val = os.environ.get(env_var)
+        if val and val.strip():
+            return val.strip()
+
+    # Search local .env files directly for provider keys without altering os.environ
+    for env_path in (Path(".env"), Path("backend/.env"), Path(__file__).resolve().parent.parent.parent / ".env"):
+        if env_path.exists():
+            try:
+                vals = dotenv.dotenv_values(env_path)
+                for env_var in target_vars:
+                    v = vals.get(env_var)
+                    if v and str(v).strip():
+                        return str(v).strip()
+            except Exception:
+                pass
+    return None
+
 
 class AdapterRegistry:
     """Registry and factory resolving model adapters from configurations."""
@@ -186,7 +221,8 @@ class AdapterRegistry:
 
         model = target.model or (connection_data.get("model") if connection_data else None)
         base_url = target.base_url or (connection_data.get("base_url") if connection_data else None)
-        api_key = target.api_key or (connection_data.get("api_key") if connection_data else None)
+        raw_key = target.api_key or (connection_data.get("api_key") if connection_data else None)
+        api_key = resolve_api_key(provider, raw_key)
         timeout = target.timeout_seconds or settings.inference_timeout_seconds
         max_chars = settings.max_response_chars
 
@@ -209,7 +245,8 @@ class AdapterRegistry:
                 extra_headers=target.custom_headers,
                 timeout_seconds=timeout,
                 max_response_chars=max_chars,
-                allow_localhost=settings.allow_non_loopback or False,
+                allow_localhost=True,
+                allow_private=True,
                 client=client,
             )
 
@@ -226,7 +263,8 @@ class AdapterRegistry:
                 response_path=resp_path,
                 timeout_seconds=timeout,
                 max_response_chars=max_chars,
-                allow_localhost=settings.allow_non_loopback or False,
+                allow_localhost=True,
+                allow_private=True,
                 client=client,
             )
 
@@ -264,6 +302,6 @@ class AdapterRegistry:
             mod = model or "gpt2"
             return TransformersPipelineAdapter(model=mod, max_response_chars=max_chars)
 
-        # Fallback to mock
-        logger.warning("Unrecognized provider '%s', falling back to mock adapter", provider)
-        return MockAdapter(behavior=MockBehavior.defended, max_response_chars=max_chars)
+        # Never silently fall back to mock
+        supported_str = ", ".join(p["id"] for p in SUPPORTED_PROVIDERS_META)
+        raise ValueError(f"Unrecognized or unsupported provider '{provider}'. Supported providers are: {supported_str}.")

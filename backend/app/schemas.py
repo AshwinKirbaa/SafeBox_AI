@@ -78,6 +78,7 @@ class TargetMode(str, Enum):
     vllm = "vllm"
     llamacpp = "llamacpp"
     transformers = "transformers"
+    connection = "connection"
     custom = "custom"
 
 
@@ -155,7 +156,7 @@ class TargetConfig(StrictModel):
     )
     provider: str | None = None
     connection_id: str | None = None
-    mock_behavior: MockBehavior = MockBehavior.defended
+    mock_behavior: MockBehavior | None = MockBehavior.defended
     model: str | None = Field(
         None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$",
         description="Model identifier override.",
@@ -170,10 +171,11 @@ class TargetConfig(StrictModel):
 
     @model_validator(mode="after")
     def _mode_specific_fields(self) -> "TargetConfig":
-        if self.mode == TargetMode.ollama and "mock_behavior" in self.model_fields_set:
-            raise ValueError("mock_behavior is only valid with mode 'mock'")
-        if self.mode == TargetMode.mock and self.model is not None:
-            raise ValueError("model is only valid with mode 'ollama'")
+        if self.mode is not None and self.mode not in (TargetMode.mock, TargetMode.connection):
+            if "mock_behavior" in self.model_fields_set and self.mock_behavior not in (None, MockBehavior.defended):
+                raise ValueError("mock_behavior is only valid with mode 'mock'")
+        if self.mode == TargetMode.mock and (self.provider is None or self.provider == "mock") and self.connection_id is None and self.model is not None:
+            raise ValueError("model is not valid with mock mode")
         return self
 
 
@@ -452,6 +454,29 @@ class ConnectionTestResponse(StrictModel):
     latency_ms: int | None = None
     capabilities: ModelCapabilitiesSchema | None = None
     discovered_models: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+
+
+class ConnectionLiveVerifyRequest(StrictModel):
+    connection_id: str | None = None
+    target: TargetConfig | None = None
+    test_id: TestId = "canary-disclosure"
+    model_override: str | None = None
+
+
+class ConnectionLiveVerifyResponse(StrictModel):
+    connection_id: str | None = None
+    provider: str
+    model: str
+    reachable: bool
+    model_available: bool | None = None
+    discovered_models: list[str] = Field(default_factory=list)
+    inference_executed: bool
+    run_id: str | None = None
+    verdict: TestStatus | None = None
+    observed_latency_ms: int | None = None
+    token_usage: TokenUsageSummary | None = None
+    explanation: str | None = None
     error_message: str | None = None
 
 

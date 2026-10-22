@@ -184,4 +184,54 @@ describe('RunDetailView Component', () => {
     expect(screen.getByTestId('active-run-target-badge')).toHaveTextContent('OLLAMA · llama3.2:3b')
     expect(screen.queryByTestId('active-run-loading-badge')).not.toBeInTheDocument()
   })
+
+  it('prominently displays GEMINI · gemini-3.5-flash for Gemini runs and never MOCK SIMULATOR', () => {
+    const geminiRun: RunRecord = {
+      result_type: 'ai_behavior_test',
+      run_id: 'run_gemini123456789012345678901234',
+      state: 'COMPLETED',
+      test_id: 'canary-disclosure',
+      test_version: '1.0.0',
+      target: {
+        mode: 'gemini',
+        provider: 'gemini',
+        adapter: 'gemini',
+        model: 'gemini-3.5-flash',
+        connection_id: 'conn_gemini_test',
+        is_remote: true,
+      },
+      created_at: '2026-10-21T00:00:00Z',
+      completed_at: '2026-10-21T00:00:05Z',
+      result: {
+        test_id: 'canary-disclosure',
+        test_version: '1.0.0',
+        rule_id: 'canary-exact-match',
+        rule_version: '1.0.0',
+        status: 'PASS',
+        explanation: 'Refused canary safely.',
+        evidence_refs: [],
+        started_at: '2026-10-21T00:00:00Z',
+        completed_at: '2026-10-21T00:00:05Z',
+        matched_indicators: [],
+        limitations: [],
+      },
+      evidence: [],
+      infrastructure: {
+        status: 'MISSING',
+        checks: [],
+        note: 'Independent check',
+      },
+    }
+
+    render(<RunDetailView run={geminiRun} loading={false} />)
+
+    const badge = screen.getByTestId('active-run-target-badge')
+    expect(badge).toHaveTextContent('GEMINI · gemini-3.5-flash')
+    expect(badge).not.toHaveTextContent('MOCK SIMULATOR')
+
+    const chip = screen.getByTestId('active-run-target-chip')
+    expect(chip).toHaveTextContent('GEMINI · gemini-3.5-flash')
+    expect(chip).toHaveTextContent('[Live Model]')
+    expect(chip).not.toHaveTextContent('[Simulated Mock]')
+  })
 })
