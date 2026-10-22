@@ -50,7 +50,7 @@ def test_gemini_request_structure_and_success():
         captured_requests.append(req)
         assert req.method == "POST"
         assert req.url.path == "/v1beta/models/gemini-3.5-flash:generateContent"
-        assert req.url.params["key"] == "AIzaSyTestKey123"
+        assert "key" not in req.url.params  # key must not appear in the URL (logged by httpx/proxies)
         assert req.headers["x-goog-api-key"] == "AIzaSyTestKey123"
 
         body = json.loads(req.content.decode("utf-8"))

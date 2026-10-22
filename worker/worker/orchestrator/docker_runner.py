@@ -240,6 +240,10 @@ class DockerSandboxOrchestrator:
                     s.observed = None
                     s.expected = None
                     s.limitation = f"Docker Desktop unavailable on host: {docker_msg}"
+                elif s.reported_state == "COMPLETED" and not s.error:
+                    # Mismatch observed on the host: keep the signal, but say what was measured.
+                    note = "Host-fallback diagnostic (Docker unavailable): measured on the host, not in the hardened container."
+                    s.limitation = f"{s.limitation} {note}"[:500] if s.limitation else note
 
             submit_reports = self.submitter.submit_all(submissions)
             return {
@@ -272,7 +276,8 @@ def main() -> int:
         image_tag=args.image_tag,
     )
     res = orchestrator.execute_and_submit(run_id=args.run_id, worker_id=args.worker_id)
-    failed_submissions = [s for s in res.get("submissions", []) if s.get("status") == "failed"]
+    # A 409 "duplicate" means the backend kept older results and did NOT accept this worker's output.
+    failed_submissions = [s for s in res.get("submissions", []) if s.get("status") in ("failed", "duplicate")]
     if args.json:
         print(json.dumps(res, indent=2))
     else:
@@ -287,7 +292,11 @@ def main() -> int:
             print(f"  Check '{s.get('check_id')}': {status_val}{err_val}")
 
     if failed_submissions:
-        print(f"\n[ERROR] {len(failed_submissions)} of {len(res.get('submissions', []))} check submissions failed!", file=sys.stderr)
+        n_dup = sum(1 for s in failed_submissions if s.get("status") == "duplicate")
+        if n_dup:
+            print(f"\n[ERROR] {n_dup} check(s) already recorded for this run; existing results were NOT overwritten. "
+                  "Use a new run, or 'Run verification' in the UI (it clears prior results first).", file=sys.stderr)
+        print(f"\n[ERROR] {len(failed_submissions)} of {len(res.get('submissions', []))} check submissions were not accepted!", file=sys.stderr)
         return 1
 
     if not res.get("submissions"):

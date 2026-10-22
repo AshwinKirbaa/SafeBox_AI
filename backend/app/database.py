@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -58,6 +59,12 @@ CREATE TABLE IF NOT EXISTS connections (
 );
 """
 
+# The seven isolation checks the sandbox worker must report before an aggregate PASS is allowed.
+REQUIRED_INFRA_CHECKS = (
+    "docker-socket-absence", "non-root-execution", "dropped-capabilities", "resource-limits",
+    "workspace-isolation", "host-filesystem-protection", "network-egress",
+)
+
 # Worst-first precedence when aggregating infrastructure checks.
 _INFRA_PRECEDENCE = [InfraStatus.FAIL, InfraStatus.ERROR, InfraStatus.UNAVAILABLE,
                      InfraStatus.PENDING, InfraStatus.PASS]
@@ -75,7 +82,7 @@ def _ts(value) -> str:
 class Database:
     def __init__(self, path: str) -> None:
         self.path = path
-        # Secure credential vault (persisted locally in protected file, never plaintext in SQLite)
+        # Plaintext credential vault stored separately from SQLite (not encrypted at rest)
         self._secrets_vault: dict[str, str] = {}
         self._load_vault()
 
@@ -91,17 +98,41 @@ class Database:
                 data = json.loads(vf.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     self._secrets_vault.update(data)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.getLogger("safebox.db").error(
+                    "Could not load credential vault (%s).",
+                    type(exc).__name__,
+                )
 
     def _save_vault(self) -> None:
+        """Persist saved API keys atomically to a local file. Plaintext at rest (not encrypted).
+
+        On POSIX platforms, 0o600 restricts mode to owner read/write. On Windows, 0o600
+        sets the read-only file attribute rather than NTFS ACLs; access control relies
+        on the parent directory permissions. Failures are logged by exception type only,
+        never exposing secret-bearing text.
+        """
         vf = self._vault_file()
-        if vf:
-            try:
-                vf.parent.mkdir(parents=True, exist_ok=True)
-                vf.write_text(json.dumps(self._secrets_vault), encoding="utf-8")
-            except Exception:
-                pass
+        if not vf:
+            return
+        tmp: Path | None = None
+        try:
+            vf.parent.mkdir(parents=True, exist_ok=True)
+            tmp = vf.with_name(vf.name + ".tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(self._secrets_vault))
+            os.replace(tmp, vf)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("safebox.db").error(
+                "Could not persist the credential vault (%s); saved API keys will not survive a restart.",
+                type(exc).__name__,
+            )
+            if tmp and tmp.exists():
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -252,6 +283,16 @@ class Database:
             return InfrastructureSummary(status=InfraStatus.MISSING, checks=[])
         present = {c.status for c in checks}
         status = next(s for s in _INFRA_PRECEDENCE if s in present)
+        if status == InfraStatus.PASS:
+            # Never claim isolation is verified from a subset of the required checks.
+            reported = {c.check_id for c in checks}
+            missing = [i for i in REQUIRED_INFRA_CHECKS if i not in reported]
+            if missing:
+                got = len(REQUIRED_INFRA_CHECKS) - len(missing)
+                return InfrastructureSummary(
+                    status=InfraStatus.PENDING, checks=checks,
+                    note=(f"Incomplete: {got} of {len(REQUIRED_INFRA_CHECKS)} required isolation checks "
+                          f"reported (missing: {', '.join(missing)}). PASS requires all of them."))
         return InfrastructureSummary(status=status, checks=checks)
 
     # -- model connections management ----------------------------------------------

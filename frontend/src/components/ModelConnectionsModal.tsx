@@ -350,7 +350,7 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                 </button>
               </div>
               <p className="text-xs text-muted mt-1">
-                Security Policy: Secrets are encrypted/vaulted server-side and never returned in API responses.
+                Security Policy: Secrets are vaulted server-side (stored in a restricted local file, not encrypted at rest) and never returned in API responses.
               </p>
             </div>
 

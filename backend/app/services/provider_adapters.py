@@ -127,10 +127,12 @@ class AnthropicAdapter(ModelAdapter):
     is_remote = True
 
     KNOWN_MODELS = [
-        "claude-3-7-sonnet-20250219",
+        # Fallback list only (used when no key / discovery fails). Authoritative list comes from
+        # GET /v1/models. Verify against your account before relying on a specific ID.
         "claude-3-5-sonnet-20241022",
         "claude-3-5-haiku-20241022",
         "claude-3-opus-20240229",
+        "claude-3-haiku-20240307",
     ]
 
     def __init__(
@@ -268,6 +270,81 @@ class AnthropicAdapter(ModelAdapter):
             provider=self.provider,
         )
 
+    def _fetch_models_paginated(
+        self,
+        client: httpx.Client,
+        timeout_seconds: float = 5.0,
+        max_pages: int = 10,
+        max_models: int = 500,
+    ) -> tuple[int, list[str], str | None]:
+        """Fetch models from Anthropic /v1/models using pagination.
+
+        Uses `limit=1000` and `after_id` query parameter according to the Anthropic API.
+        The response contains `data` (list of model objects), `has_more` (bool), and
+        `last_id` (str, cursor for next page).
+        Guards against loops via `seen_cursors`, limits total pages and total models.
+        Keeps API key strictly in headers (never in URLs or logs).
+        """
+        all_models: list[str] = []
+        seen_cursors: set[str] = set()
+        seen_ids: set[str] = set()
+        cursor: str | None = None
+        status_code = 200
+
+        for page in range(max_pages):
+            params: dict[str, Any] = {"limit": 1000}
+            if cursor:
+                params["after_id"] = cursor
+
+            resp = client.get(
+                f"{self.base_url}/v1/models",
+                params=params,
+                headers=self._get_headers(),
+                timeout=timeout_seconds,
+            )
+            status_code = resp.status_code
+            if resp.status_code != 200:
+                if page == 0:
+                    return status_code, [], f"Anthropic model listing returned HTTP {status_code}"
+                # Non-first page error: stop and return models collected so far
+                break
+
+            try:
+                data = resp.json()
+            except Exception:
+                if page == 0:
+                    return status_code, [], "Anthropic model listing returned invalid JSON."
+                break
+
+            items = data.get("data", [])
+            for item in items:
+                if isinstance(item, dict) and item.get("id"):
+                    mid = str(item["id"]).strip()
+                    if mid and mid not in seen_ids:
+                        seen_ids.add(mid)
+                        all_models.append(mid)
+                        if len(all_models) >= max_models:
+                            break
+
+            if len(all_models) >= max_models:
+                break
+
+            has_more = data.get("has_more", False)
+            if not has_more:
+                break
+
+            next_cursor = data.get("last_id")
+            if not next_cursor and items and isinstance(items[-1], dict):
+                next_cursor = items[-1].get("id")
+
+            if not next_cursor or next_cursor in seen_cursors:
+                break
+
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+        return status_code, all_models, None
+
     def check_connection(self, timeout_seconds: float = 5.0) -> ConnectionCheckResult:
         if not self.api_key:
             return ConnectionCheckResult(
@@ -279,38 +356,34 @@ class AnthropicAdapter(ModelAdapter):
         start = time.perf_counter()
         client, owned = self._http()
         try:
-            # Probe models endpoint
-            resp = client.get(f"{self.base_url}/v1/models", headers=self._get_headers(), timeout=timeout_seconds)
+            status_code, models, err = self._fetch_models_paginated(client, timeout_seconds=timeout_seconds)
             latency = int((time.perf_counter() - start) * 1000)
-            if resp.status_code == 401 or resp.status_code == 403:
+            if status_code in (401, 403):
                 return ConnectionCheckResult(
                     reachable=True,
                     model_available=False,
                     latency_ms=latency,
                     error_message="Invalid Anthropic API key.",
                 )
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data.get("data", [])
-                models = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
+            if status_code == 200 and not err:
                 return ConnectionCheckResult(
                     reachable=True,
-                    model_available=self.model in models if models else True,
+                    model_available=self.model in models if models else False,
                     latency_ms=latency,
                     discovered_models=tuple(models or self.KNOWN_MODELS),
                     capabilities=self.capabilities,
+                    error_message=None if models else "Anthropic returned an empty model list; model availability is unconfirmed.",
                 )
             return ConnectionCheckResult(
                 reachable=True,
-                model_available=True,
+                model_available=False,
                 latency_ms=latency,
-                discovered_models=tuple(self.KNOWN_MODELS),
-                capabilities=self.capabilities,
+                error_message=err or f"Anthropic model listing returned HTTP {status_code}; model availability is unconfirmed.",
             )
         except Exception as exc:
             return ConnectionCheckResult(
                 reachable=False,
-                error_message=f"Anthropic connection check error: {exc}",
+                error_message=f"Anthropic connection check error: {sanitize_secrets_from_text(str(exc))}",
             )
         finally:
             if owned:
@@ -321,17 +394,16 @@ class AnthropicAdapter(ModelAdapter):
             return self.KNOWN_MODELS
         client, owned = self._http()
         try:
-            resp = client.get(f"{self.base_url}/v1/models", headers=self._get_headers(), timeout=timeout_seconds)
-            if resp.status_code == 200:
-                items = resp.json().get("data", [])
-                models = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
-                return sorted(models) if models else self.KNOWN_MODELS
+            status_code, models, _ = self._fetch_models_paginated(client, timeout_seconds=timeout_seconds)
+            if status_code == 200 and models:
+                return sorted(models)
+            return self.KNOWN_MODELS
         except Exception:
-            pass
+            return self.KNOWN_MODELS
         finally:
             if owned:
                 client.close()
-        return self.KNOWN_MODELS
+
 
 
 # --------------------------------------------------------------------------- #
@@ -399,7 +471,7 @@ class GeminiAdapter(ModelAdapter):
             clean_model = clean_model[7:]
 
         endpoint = f"{self.base_url}/v1beta/models/{clean_model}:generateContent"
-        params = {"key": self.api_key.strip()}
+        # Key goes in the header only: a ?key= URL parameter is written to httpx/proxy logs.
         headers = {"x-goog-api-key": self.api_key.strip()}
 
         user_parts: list[dict[str, Any]] = [{"text": request.user_prompt}]
@@ -429,7 +501,7 @@ class GeminiAdapter(ModelAdapter):
         client, owned = self._http()
         body = bytearray()
         try:
-            with client.stream("POST", endpoint, params=params, headers=headers, json=payload,
+            with client.stream("POST", endpoint, headers=headers, json=payload,
                                timeout=self.timeout_seconds) as resp:
                 if resp.status_code >= 400:
                     data_preview = resp.read().decode("utf-8", errors="ignore")
@@ -500,6 +572,76 @@ class GeminiAdapter(ModelAdapter):
             provider=self.provider,
         )
 
+    def _fetch_models_paginated(
+        self,
+        client: httpx.Client,
+        timeout_seconds: float = 5.0,
+        max_pages: int = 10,
+        max_models: int = 500,
+    ) -> tuple[int, list[str], str | None]:
+        """Fetch models from Gemini /v1beta/models using pagination.
+
+        Uses `pageSize=1000` and `pageToken` according to the Google Generative AI API.
+        The response contains `models` (list of model objects) and `nextPageToken` (str).
+        Guards against loops via `seen_tokens`, limits total pages and total models.
+        Keeps API key strictly in the `x-goog-api-key` header (never in URLs or logs).
+        """
+        all_models: list[str] = []
+        seen_tokens: set[str] = set()
+        seen_names: set[str] = set()
+        page_token: str | None = None
+        status_code = 200
+
+        for page in range(max_pages):
+            params: dict[str, Any] = {"pageSize": 1000}
+            if page_token:
+                params["pageToken"] = page_token
+
+            resp = client.get(
+                f"{self.base_url}/v1beta/models",
+                params=params,
+                headers={"x-goog-api-key": self.api_key.strip()},
+                timeout=timeout_seconds,
+            )
+            status_code = resp.status_code
+            if resp.status_code != 200:
+                if page == 0:
+                    return status_code, [], f"Gemini model listing returned HTTP {status_code}"
+                # Non-first page error: stop and return models collected so far
+                break
+
+            try:
+                data = resp.json()
+            except Exception:
+                if page == 0:
+                    return status_code, [], "Gemini model listing returned invalid JSON."
+                break
+
+            items = data.get("models", [])
+            for item in items:
+                if isinstance(item, dict):
+                    methods = item.get("supportedGenerationMethods", ["generateContent"])
+                    if "generateContent" in methods:
+                        raw_name = item.get("name", "")
+                        clean_name = raw_name.replace("models/", "").strip()
+                        if clean_name and clean_name not in seen_names:
+                            seen_names.add(clean_name)
+                            all_models.append(clean_name)
+                            if len(all_models) >= max_models:
+                                break
+
+            if len(all_models) >= max_models:
+                break
+
+            next_page_token = data.get("nextPageToken")
+            if not next_page_token or next_page_token in seen_tokens:
+                break
+
+            seen_tokens.add(next_page_token)
+            page_token = next_page_token
+
+        return status_code, all_models, None
+
     def check_connection(self, timeout_seconds: float = 5.0) -> ConnectionCheckResult:
         if not self.api_key:
             return ConnectionCheckResult(
@@ -511,49 +653,36 @@ class GeminiAdapter(ModelAdapter):
         start = time.perf_counter()
         client, owned = self._http()
         try:
-            resp = client.get(
-                f"{self.base_url}/v1beta/models",
-                params={"key": self.api_key},
-                headers={"x-goog-api-key": self.api_key},
-                timeout=timeout_seconds,
-            )
+            status_code, models, err = self._fetch_models_paginated(client, timeout_seconds=timeout_seconds)
             latency = int((time.perf_counter() - start) * 1000)
-            if resp.status_code == 400 or resp.status_code == 403:
+            if status_code in (400, 401, 403):
                 return ConnectionCheckResult(
                     reachable=True,
                     model_available=False,
                     latency_ms=latency,
                     error_message="Invalid Gemini API key.",
                 )
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data.get("models", [])
-                gen_models = [
-                    m for m in items
-                    if isinstance(m, dict) and "generateContent" in m.get("supportedGenerationMethods", ["generateContent"])
-                ]
-                raw_names = [m.get("name", "") for m in gen_models if m.get("name")]
-                cleaned = [n.replace("models/", "") for n in raw_names if n]
+            if status_code == 200 and not err:
                 clean_model = self.model.replace("models/", "")
-                model_avail = clean_model in cleaned or self.model in raw_names or clean_model in self.KNOWN_MODELS
+                model_avail = clean_model in models if models else False
                 return ConnectionCheckResult(
                     reachable=True,
                     model_available=model_avail,
                     latency_ms=latency,
-                    discovered_models=tuple(cleaned or self.KNOWN_MODELS),
+                    discovered_models=tuple(models or self.KNOWN_MODELS),
                     capabilities=self.capabilities,
+                    error_message=None if models else "Gemini returned an empty model list; model availability is unconfirmed.",
                 )
             return ConnectionCheckResult(
                 reachable=True,
-                model_available=True,
+                model_available=False,
                 latency_ms=latency,
-                discovered_models=tuple(self.KNOWN_MODELS),
-                capabilities=self.capabilities,
+                error_message=err or f"Gemini model listing returned HTTP {status_code}; model availability is unconfirmed.",
             )
         except Exception as exc:
             return ConnectionCheckResult(
                 reachable=False,
-                error_message=f"Gemini connection error: {exc}",
+                error_message=f"Gemini connection error: {sanitize_secrets_from_text(str(exc))}",
             )
         finally:
             if owned:
@@ -564,21 +693,9 @@ class GeminiAdapter(ModelAdapter):
             return self.KNOWN_MODELS
         client, owned = self._http()
         try:
-            resp = client.get(
-                f"{self.base_url}/v1beta/models",
-                params={"key": self.api_key},
-                headers={"x-goog-api-key": self.api_key},
-                timeout=timeout_seconds,
-            )
-            if resp.status_code == 200:
-                items = resp.json().get("models", [])
-                gen_models = [
-                    m for m in items
-                    if isinstance(m, dict) and "generateContent" in m.get("supportedGenerationMethods", ["generateContent"])
-                ]
-                raw_names = [m.get("name", "") for m in gen_models if m.get("name")]
-                cleaned = [n.replace("models/", "") for n in raw_names if n]
-                return sorted(cleaned) if cleaned else self.KNOWN_MODELS
+            status_code, models, _ = self._fetch_models_paginated(client, timeout_seconds=timeout_seconds)
+            if status_code == 200 and models:
+                return sorted(models)
             return self.KNOWN_MODELS
         except Exception:
             return self.KNOWN_MODELS
@@ -733,6 +850,13 @@ class HuggingFaceAdapter(ModelAdapter):
                     model_available=False,
                     latency_ms=latency,
                     error_message=f"Model '{self.model}' not found on Hugging Face.",
+                )
+            if resp.status_code >= 400:
+                return ConnectionCheckResult(
+                    reachable=True,
+                    model_available=False,
+                    latency_ms=latency,
+                    error_message=f"Hugging Face returned HTTP {resp.status_code}; model availability is unconfirmed.",
                 )
             return ConnectionCheckResult(
                 reachable=True,

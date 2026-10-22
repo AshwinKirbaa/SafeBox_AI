@@ -1,4 +1,7 @@
 import socket
+import sys
+from pathlib import Path
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +9,11 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 from app.services.test_registry import CANARY, PROHIBITED_STRING
+
+# The launch-worker endpoint and its tests import the sibling `worker` package.
+_WORKER_ROOT = str(Path(__file__).resolve().parents[2] / "worker")
+if _WORKER_ROOT not in sys.path:
+    sys.path.insert(0, _WORKER_ROOT)
 
 
 @pytest.fixture(autouse=True)
