@@ -162,89 +162,104 @@ describe('Run Selection & Inspection Flow Integration', () => {
     vi.restoreAllMocks()
   })
 
-  it('automatically selects the latest run on initial load and renders details', async () => {
+  it('automatically selects the latest run on initial load and allows navigating to Run Details', async () => {
+    window.location.hash = '#/overview'
     render(<App />)
 
-    await waitFor(
-      () => {
-        expect(screen.getByTestId('run-detail-view')).toBeInTheDocument()
-      },
-      { timeout: 10000 }
-    )
-
-    // Latest run (Run 1) details are loaded
-    expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()
-    expect(screen.getByTestId('active-run-target-badge')).toHaveTextContent('MOCK SIMULATOR')
-
-    // History table displays "Viewing" for run 1 and "Inspect" for run 2
-    const viewingButton = screen.getByRole('button', {
-      name: /Viewing run run_alpha111111111111111111111111/i,
+    // Wait for initial data to load
+    await waitFor(() => {
+      expect(screen.getByText('SafeBox AI Defense Platform')).toBeInTheDocument()
     })
-    expect(viewingButton).toBeInTheDocument()
-    expect(viewingButton).toHaveClass('btn-viewing')
+
+    // Latest run (Run 1) is selected and spotlighted on Overview
+    expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()
+
+    // Navigate to Run Explorer via sidebar
+    fireEvent.click(screen.getByTestId('nav-runs'))
+
+    // Run Explorer displays Viewing for Run 1 and Inspect for Run 2
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', {
+          name: /Viewing run run_alpha111111111111111111111111/i,
+        })
+      ).toBeInTheDocument()
+    })
 
     const inspectButton = screen.getByRole('button', {
       name: /Inspect run run_bravo222222222222222222222222/i,
     })
     expect(inspectButton).toBeInTheDocument()
+
+    // Navigate to Run Details via sidebar
+    fireEvent.click(screen.getByTestId('nav-details'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('run-detail-view')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('active-run-target-badge')).toHaveTextContent('MOCK SIMULATOR')
   })
 
-  it('smoothly scrolls to detail and updates RunDetailView when Inspect is clicked', async () => {
+  it('navigates from Run Explorer to Run Details and displays Run 2 when Inspect is clicked', async () => {
+    window.location.hash = '#/runs'
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', {
+          name: /Inspect run run_bravo222222222222222222222222/i,
+        })
+      ).toBeInTheDocument()
     })
 
     const inspectButton = screen.getByRole('button', {
       name: /Inspect run run_bravo222222222222222222222222/i,
     })
 
-    // Click Inspect on Run 2
+    // Click Inspect on Run 2 in explorer
     fireEvent.click(inspectButton)
 
-    // Should immediately call scrollIntoView to scroll up to detail section
-    expect(scrollIntoViewMock).toHaveBeenCalledWith({
-      behavior: 'smooth',
-      block: 'start',
-    })
-
-    // Should fetch and display Run 2
+    // Automatically transitions to Run Details page and displays Run 2
     await waitFor(() => {
+      expect(screen.getByTestId('run-detail-view')).toBeInTheDocument()
       expect(screen.getByText('run_bravo222222222222222222222222')).toBeInTheDocument()
     })
     expect(screen.getByTestId('active-run-target-badge')).toHaveTextContent(
       'OLLAMA · llama3.2:3b'
     )
-
-    // Run 2 action button is now "Viewing"
-    const nowViewingButton = screen.getByRole('button', {
-      name: /Viewing run run_bravo222222222222222222222222/i,
-    })
-    expect(nowViewingButton).toHaveClass('btn-viewing')
   })
 
-  it('scrolls to detail view when clicking Viewing on an already selected run', async () => {
+  it('preserves selected run across navigation to Workflow Canvas', async () => {
+    window.location.hash = '#/runs'
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', {
+          name: /Inspect run run_bravo222222222222222222222222/i,
+        })
+      ).toBeInTheDocument()
     })
 
-    scrollIntoViewMock.mockClear()
+    // Inspect Run 2
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /Inspect run run_bravo222222222222222222222222/i,
+      })
+    )
 
-    const viewingButton = screen.getByRole('button', {
-      name: /Viewing run run_alpha111111111111111111111111/i,
+    await waitFor(() => {
+      expect(screen.getByText('run_bravo222222222222222222222222')).toBeInTheDocument()
     })
 
-    // Click on Viewing button
-    fireEvent.click(viewingButton)
+    // Navigate to Workflow page
+    fireEvent.click(screen.getByTestId('nav-workflow'))
 
-    // Should scroll to detail section even though already selected
-    expect(scrollIntoViewMock).toHaveBeenCalledWith({
-      behavior: 'smooth',
-      block: 'start',
+    // Workflow canvas should load with the selected Run 2 active
+    await waitFor(() => {
+      expect(screen.getByTestId('workflow-node-origin')).toBeInTheDocument()
     })
+    expect(screen.getByText(/OLLAMA · llama3.2:3b/i)).toBeInTheDocument()
   })
 
   it('displays inline error and allows retry when switching runs encounters an API failure', async () => {
@@ -261,10 +276,15 @@ describe('Run Selection & Inspection Flow Integration', () => {
       return Promise.reject(new Error('Unknown run'))
     })
 
+    window.location.hash = '#/runs'
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', {
+          name: /Inspect run run_bravo222222222222222222222222/i,
+        })
+      ).toBeInTheDocument()
     })
 
     const inspectButton = screen.getByRole('button', {

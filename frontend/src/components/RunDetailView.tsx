@@ -13,6 +13,7 @@ import {
 import type { RunRecord } from '../types/safebox'
 import { AiEvaluationPanel } from './AiEvaluationPanel'
 import { InfraIsolationPanel } from './InfraIsolationPanel'
+import { WorkflowPipelineGraph } from './WorkflowPipelineGraph'
 
 export interface RunDetailViewProps {
   run: RunRecord | null
@@ -226,6 +227,13 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Dual-Plane Workflow Pipeline Visualization */}
+      <WorkflowPipelineGraph
+        run={run}
+        loading={isTransitioning}
+        selectedRunId={selectedRunId}
+      />
 
       {/* Dual Independence Callout */}
       <div className="independence-explainer-banner">

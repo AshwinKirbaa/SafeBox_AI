@@ -1,10 +1,14 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { Header } from './components/Header'
-import { TestLauncher } from './components/TestLauncher'
-import { RunDetailView } from './components/RunDetailView'
-import { RunHistory } from './components/RunHistory'
+import React, { useEffect, useState, useCallback } from 'react'
+import { Sidebar } from './components/Sidebar'
+import { TopBar } from './components/TopBar'
+import { OverviewPage } from './pages/OverviewPage'
+import { TestLabPage } from './pages/TestLabPage'
+import { WorkflowPage } from './pages/WorkflowPage'
+import { RunExplorerPage } from './pages/RunExplorerPage'
+import { RunDetailsPage } from './pages/RunDetailsPage'
 import { ModelConnectionsModal } from './components/ModelConnectionsModal'
 import { api } from './services/api'
+import type { AppPage } from './types/navigation'
 import type {
   HealthResponse,
   SecurityTestMeta,
@@ -13,10 +17,22 @@ import type {
   RunRequest,
   SavedConnection,
 } from './types/safebox'
-import { AlertCircle, X } from 'lucide-react'
+import { AlertCircle, X, CheckCircle2 } from 'lucide-react'
 import './App.css'
 
+const getPageFromHash = (): AppPage => {
+  if (typeof window === 'undefined') return 'overview'
+  const hash = window.location.hash.toLowerCase()
+  if (hash.includes('test-lab') || hash.includes('launcher')) return 'test-lab'
+  if (hash.includes('workflow') || hash.includes('canvas')) return 'workflow'
+  if (hash.includes('runs') || hash.includes('history') || hash.includes('explorer')) return 'runs'
+  if (hash.includes('details') || hash.includes('inspection')) return 'details'
+  return 'overview'
+}
+
 export const App: React.FC = () => {
+  const [activePage, setActivePage] = useState<AppPage>(() => getPageFromHash())
+
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loadingHealth, setLoadingHealth] = useState<boolean>(true)
   const [healthError, setHealthError] = useState<string | null>(null)
@@ -38,11 +54,27 @@ export const App: React.FC = () => {
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null)
   const [loadingDetail, setLoadingDetail] = useState<boolean>(false)
   const [detailError, setDetailError] = useState<string | null>(null)
-  const detailSectionRef = useRef<HTMLElement>(null)
 
   const [isRunning, setIsRunning] = useState<boolean>(false)
   const [bannerError, setBannerError] = useState<string | null>(null)
   const [bannerSuccess, setBannerSuccess] = useState<string | null>(null)
+
+  // Listen to browser hash navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      const page = getPageFromHash()
+      setActivePage(page)
+    }
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
+  }, [])
+
+  const navigateTo = useCallback((page: AppPage) => {
+    setActivePage(page)
+    if (typeof window !== 'undefined' && window.location.hash !== `#/${page}`) {
+      window.location.hash = `#/${page}`
+    }
+  }, [])
 
   // 1. Fetch Health
   const fetchHealth = useCallback(async () => {
@@ -105,27 +137,6 @@ export const App: React.FC = () => {
     [selectedRunId, filters]
   )
 
-  // Scroll to detail section
-  const scrollToDetail = useCallback(() => {
-    if (detailSectionRef.current) {
-      if (typeof detailSectionRef.current.scrollIntoView === 'function') {
-        detailSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      } else if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
-        const top = detailSectionRef.current.offsetTop - 24
-        window.scrollTo({ top: top > 0 ? top : 0, behavior: 'smooth' })
-      }
-    }
-  }, [])
-
-  // Handle run selection with auto-scroll
-  const handleSelectRun = useCallback(
-    (runId: string) => {
-      setSelectedRunId(runId)
-      scrollToDetail()
-    },
-    [scrollToDetail]
-  )
-
   // 5. Fetch Specific Run Detail
   const fetchRunDetail = useCallback(async (runId: string) => {
     setLoadingDetail(true)
@@ -140,6 +151,10 @@ export const App: React.FC = () => {
     } finally {
       setLoadingDetail(false)
     }
+  }, [])
+
+  const handleSelectRun = useCallback((runId: string) => {
+    setSelectedRunId(runId)
   }, [])
 
   const handleRetryDetail = useCallback(() => {
@@ -230,7 +245,6 @@ export const App: React.FC = () => {
       const newRecord = await api.runSecurityTest(req)
       setSelectedRun(newRecord)
       setSelectedRunId(newRecord.run_id)
-      scrollToDetail()
       setBannerSuccess(
         `Security test completed. Verdict: ${newRecord.result?.status || 'COMPLETED'} for run ${newRecord.run_id}`
       )
@@ -261,93 +275,137 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="app-layout">
-      {/* Top Navigation & Status */}
-      <Header
+    <div className="safebox-app-shell">
+      {/* 1. Persistent Compact Left Sidebar */}
+      <Sidebar
+        activePage={activePage}
+        onNavigate={navigateTo}
+        onOpenConnections={() => setIsConnectionsModalOpen(true)}
+        connectionCount={connections.length}
         health={health}
-        loadingHealth={loadingHealth}
         healthError={healthError}
-        onRefresh={handleRefreshAll}
       />
 
-      <main className="main-content">
-        {/* Error Notification Toast */}
-        {bannerError && (
-          <div className="alert-banner alert-error" role="alert">
-            <div className="alert-content">
-              <AlertCircle className="alert-icon" />
-              <span>{bannerError}</span>
+      {/* 2. Main Shell Layout (TopBar + Dedicated Page Content) */}
+      <div className="app-shell-main">
+        {/* Slim Top Header Bar */}
+        <TopBar
+          activePage={activePage}
+          selectedRun={selectedRun}
+          health={health}
+          loadingHealth={loadingHealth}
+          healthError={healthError}
+          onRefresh={handleRefreshAll}
+          onNavigate={navigateTo}
+        />
+
+        {/* Global Notifications Banner */}
+        <div className="shell-alerts-container">
+          {bannerError && (
+            <div className="alert-banner alert-error" role="alert">
+              <div className="alert-content">
+                <AlertCircle className="alert-icon" />
+                <span>{bannerError}</span>
+              </div>
+              <button
+                type="button"
+                className="btn-close-alert"
+                onClick={() => setBannerError(null)}
+                aria-label="Dismiss alert"
+              >
+                <X className="close-icon" />
+              </button>
             </div>
-            <button
-              className="btn-close-alert"
-              onClick={() => setBannerError(null)}
-              aria-label="Dismiss alert"
-            >
-              <X className="close-icon" />
-            </button>
-          </div>
-        )}
+          )}
 
-        {/* Success Notification Toast */}
-        {bannerSuccess && (
-          <div className="alert-banner alert-success" role="alert">
-            <div className="alert-content">
-              <span>{bannerSuccess}</span>
+          {bannerSuccess && (
+            <div className="alert-banner alert-success" role="alert">
+              <div className="alert-content">
+                <CheckCircle2 className="alert-icon" />
+                <span>{bannerSuccess}</span>
+              </div>
+              <button
+                type="button"
+                className="btn-close-alert"
+                onClick={() => setBannerSuccess(null)}
+                aria-label="Dismiss alert"
+              >
+                <X className="close-icon" />
+              </button>
             </div>
-            <button
-              className="btn-close-alert"
-              onClick={() => setBannerSuccess(null)}
-              aria-label="Dismiss alert"
-            >
-              <X className="close-icon" />
-            </button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Top Control Section: Test Launcher */}
-        <section className="launcher-section">
-          <TestLauncher
-            tests={tests}
-            activeMode={health?.target_mode || 'mock'}
-            loadingTests={loadingTests}
-            isRunning={isRunning}
-            connections={connections}
-            onOpenConnections={() => setIsConnectionsModalOpen(true)}
-            onRunTest={handleRunTest}
-          />
-        </section>
+        {/* 3. Primary Content Area: One Primary Page at a Time */}
+        <main className="app-page-viewport">
+          {activePage === 'overview' && (
+            <OverviewPage
+              health={health}
+              healthError={healthError}
+              runs={runs}
+              totalRuns={totalRuns}
+              selectedRun={selectedRun}
+              onSelectRun={handleSelectRun}
+              onNavigate={navigateTo}
+            />
+          )}
 
-        {/* Primary View: Two Independent Security Result Panels */}
-        <section ref={detailSectionRef} id="active-run-detail" className="detail-section">
-          <RunDetailView
-            run={selectedRun}
-            loading={loadingDetail}
-            selectedRunId={selectedRunId}
-            error={detailError}
-            onRetry={handleRetryDetail}
-            onRefreshRun={fetchRunDetail}
-          />
-        </section>
+          {activePage === 'test-lab' && (
+            <TestLabPage
+              tests={tests}
+              activeMode={health?.target_mode || 'mock'}
+              loadingTests={loadingTests}
+              isRunning={isRunning}
+              connections={connections}
+              lastLaunchedRun={selectedRun}
+              onOpenConnections={() => setIsConnectionsModalOpen(true)}
+              onRunTest={handleRunTest}
+              onNavigate={navigateTo}
+            />
+          )}
 
-        {/* Bottom Section: Run History Explorer */}
-        <section className="history-section">
-          <RunHistory
-            runs={runs}
-            total={totalRuns}
-            limit={10}
-            offset={runOffset}
-            hasMore={hasMoreRuns}
-            selectedRunId={selectedRunId}
-            loading={loadingRuns}
-            onSelectRun={handleSelectRun}
-            onPageChange={(newOffset) => fetchRuns(newOffset, filters)}
-            onRefresh={() => fetchRuns(runOffset, filters)}
-            onFilterChange={handleFilterChange}
-          />
-        </section>
-      </main>
+          {activePage === 'workflow' && (
+            <WorkflowPage
+              run={selectedRun}
+              loading={loadingDetail}
+              allRuns={runs}
+              onSelectRunId={handleSelectRun}
+              onNavigate={navigateTo}
+            />
+          )}
 
-      {/* Model Connections Management Modal */}
+          {activePage === 'runs' && (
+            <RunExplorerPage
+              runs={runs}
+              total={totalRuns}
+              limit={10}
+              offset={runOffset}
+              hasMore={hasMoreRuns}
+              selectedRunId={selectedRunId}
+              loading={loadingRuns}
+              onSelectRun={handleSelectRun}
+              onPageChange={(newOffset) => fetchRuns(newOffset, filters)}
+              onRefresh={() => fetchRuns(runOffset, filters)}
+              onFilterChange={handleFilterChange}
+              onNavigate={navigateTo}
+            />
+          )}
+
+          {activePage === 'details' && (
+            <RunDetailsPage
+              run={selectedRun}
+              loading={loadingDetail}
+              selectedRunId={selectedRunId}
+              error={detailError}
+              onRetry={handleRetryDetail}
+              onRefreshRun={fetchRunDetail}
+              onNavigate={navigateTo}
+            />
+          )}
+        </main>
+      </div>
+
+      {/* Model Connections Modal */}
       <ModelConnectionsModal
         isOpen={isConnectionsModalOpen}
         onClose={() => setIsConnectionsModalOpen(false)}
@@ -355,16 +413,6 @@ export const App: React.FC = () => {
           fetchConnections()
         }}
       />
-
-      {/* Footer */}
-      <footer className="footer-container">
-        <p>
-          SafeBox AI &bull; Universal Model Security Evaluation &bull; Independent Isolation Planes
-        </p>
-        <span className="footer-links">
-          Strict Redaction Enforced &bull; Deterministic Rules &bull; SSRF Protection &bull; Container Non-Root Isolation
-        </span>
-      </footer>
     </div>
   )
 }
