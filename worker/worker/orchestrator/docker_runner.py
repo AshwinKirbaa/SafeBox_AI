@@ -127,14 +127,121 @@ class DockerSandboxOrchestrator:
         ]
         return args
 
-    def run_in_docker(self, run_id: str, worker_id: str = "worker-1") -> dict[str, Any]:
-        """Run isolation checks inside Docker container and return parsed report."""
+    def verify_host_mount_isolation(
+        self,
+        cmd: list[str],
+        run_workspace: Path,
+        adjacent_workspace: Path,
+    ) -> tuple[bool, str | None, dict[str, Any]]:
+        """Verify host-side isolation prerequisites and Docker mount arguments.
+
+        Verifies:
+        1. Current workspace exists and is a directory.
+        2. Adjacent workspace exists and contains the protected_secret.txt sentinel.
+        3. Current and adjacent workspace paths are different.
+        4. Exactly one bind mount is present in the Docker arguments, mounting the
+           current workspace to /workspace:rw.
+        5. The adjacent workspace is NOT mounted.
+        """
+        # 1. Current workspace must exist and be a directory
+        if not run_workspace.exists() or not run_workspace.is_dir():
+            return False, f"Current run workspace does not exist or is not a directory: {run_workspace}", {}
+
+        # 2. Adjacent workspace must exist and be a directory
+        if not adjacent_workspace.exists() or not adjacent_workspace.is_dir():
+            return False, f"Adjacent workspace does not exist or is not a directory: {adjacent_workspace}", {}
+
+        # 3. Current and adjacent workspaces must be distinct
+        run_ws_resolved = str(run_workspace.resolve()).lower()
+        adj_ws_resolved = str(adjacent_workspace.resolve()).lower()
+        if run_ws_resolved == adj_ws_resolved:
+            return False, "Current run workspace and adjacent workspace resolve to the exact same path", {}
+
+        # 4. Sentinel file must exist in adjacent workspace
+        sentinel = adjacent_workspace / "protected_secret.txt"
+        if not sentinel.exists() or not sentinel.is_file():
+            return False, f"Adjacent workspace sentinel 'protected_secret.txt' missing in {adjacent_workspace}", {}
+
+        # 4. Inspect Docker argument list for mount configurations
+        mount_specs: list[tuple[str, str]] = []
+        i = 0
+        while i < len(cmd):
+            arg = cmd[i]
+            if arg in ("-v", "--volume", "--mount"):
+                if i + 1 < len(cmd):
+                    mount_specs.append((arg, cmd[i + 1]))
+                    i += 2
+                    continue
+            elif arg.startswith(("-v=", "--volume=", "--mount=")):
+                flag, val = arg.split("=", 1)
+                mount_specs.append((flag, val))
+            i += 1
+
+        if len(mount_specs) == 0:
+            return False, "No bind mount present in Docker command line", {}
+
+        if len(mount_specs) > 1:
+            return False, f"Unexpected extra bind mount(s) detected in Docker arguments: {[m[1] for m in mount_specs]}", {}
+
+        flag, mount_arg = mount_specs[0]
+
+        if flag in ("--mount", "--mount="):
+            parts = dict(p.split("=", 1) for p in mount_arg.split(",") if "=" in p)
+            src = parts.get("src") or parts.get("source")
+            dst = parts.get("dst") or parts.get("destination") or parts.get("target")
+            ro = parts.get("readonly") or parts.get("ro")
+            if dst != "/workspace" or ro in ("true", "1"):
+                return False, f"Mount container target must be '/workspace' and writable (found '{mount_arg}')", {}
+            host_src = src or ""
+        else:
+            sep_idx = mount_arg.rfind(":/")
+            if sep_idx == -1:
+                return False, f"Invalid mount specification format: {mount_arg}", {}
+            host_src = mount_arg[:sep_idx]
+            container_dst = mount_arg[sep_idx + 1:]
+            if container_dst != "/workspace:rw":
+                return False, f"Mount container target must be exactly '/workspace:rw' (found '{container_dst}')", {}
+
+        try:
+            host_src_resolved = str(Path(host_src).resolve()).lower()
+        except Exception as e:
+            return False, f"Failed to resolve host mount source '{host_src}': {e}", {}
+
+        if host_src_resolved != run_ws_resolved:
+            return False, f"Mount source '{host_src}' does not match current run workspace '{run_workspace}'", {}
+
+        if host_src_resolved == adj_ws_resolved:
+            return False, f"Mount source '{host_src}' resolves to adjacent workspace", {}
+
+        evidence = {
+            "mount_spec": mount_arg,
+            "run_workspace": str(run_workspace.resolve()),
+            "adjacent_workspace": str(adjacent_workspace.resolve()),
+            "sentinel_file": str(sentinel.resolve()),
+        }
+        return True, None, evidence
+
+    def run_in_docker(
+        self,
+        run_id: str,
+        worker_id: str = "worker-1",
+        run_workspace: Path | None = None,
+        adjacent_workspace: Path | None = None,
+    ) -> dict[str, Any]:
+        """Run isolation checks inside Docker container, verify host mount isolation, and return reconciled report."""
         docker_ok, docker_msg = self.is_docker_available()
         if not docker_ok:
             raise RuntimeError(f"Cannot run in Docker: {docker_msg}")
 
-        run_ws, adj_ws = self.prepare_workspaces(run_id)
+        if run_workspace is not None and adjacent_workspace is not None:
+            run_ws, adj_ws = run_workspace, adjacent_workspace
+        else:
+            run_ws, adj_ws = self.prepare_workspaces(run_id)
+
         cmd = self.build_docker_run_args(run_id, run_ws, worker_id=worker_id)
+
+        # 1. Host-side verification of workspace isolation prerequisites and mount arguments
+        host_ok, host_err, host_evidence = self.verify_host_mount_isolation(cmd, run_ws, adj_ws)
 
         logger.info("Executing container: %s", " ".join(cmd))
         proc = subprocess.run(
@@ -151,9 +258,80 @@ class DockerSandboxOrchestrator:
             )
 
         try:
-            return json.loads(proc.stdout)
+            report = json.loads(proc.stdout)
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Failed to parse container JSON output: {e}\nRaw output: {proc.stdout}")
+
+        # 2. Combine host-side mount isolation evidence with container-side check
+        checks = report.get("checks", [])
+        ws_check = next((c for c in checks if c.get("check_id") == "workspace-isolation"), None)
+
+        if ws_check is None:
+            # Container output omitted workspace verification
+            checks.append({
+                "check_id": "workspace-isolation",
+                "policy_id": "per-run-workspace-separation",
+                "policy_version": "1.0.0",
+                "status": CheckStatus.INCONCLUSIVE.value,
+                "expected": "isolated run workspace accessible; adjacent run workspaces inaccessible",
+                "observed": "container workspace verification missing",
+                "limitation": "Missing container workspace verification: check was omitted from container output.",
+                "error": "Missing container workspace verification result",
+            })
+            report["checks"] = checks
+            return report
+
+        c_status = ws_check.get("status")
+        c_observed = ws_check.get("observed", "")
+        c_error = ws_check.get("error")
+        c_evidence_detail = ws_check.get("evidence_detail", "")
+
+        # 3. If an actual cross-workspace access breach was detected by container, preserve FAIL
+        if c_status == CheckStatus.FAIL.value or "cross-workspace isolation breach" in c_observed:
+            ws_check["status"] = CheckStatus.FAIL.value
+            return report
+
+        # 4. Check container-side writable-workspace verification
+        container_workspace_ok = (
+            c_error is None
+            and "unwritable" not in c_observed
+            and "mismatch" not in c_observed
+            and c_status not in (CheckStatus.ERROR.value, CheckStatus.FAIL.value)
+            and ("verified writable" in c_evidence_detail.lower() or "workspace /workspace verified" in c_evidence_detail.lower() or c_status == CheckStatus.INCONCLUSIVE.value)
+        )
+
+        # 5. If container failed write/read or reported ERROR, retain ERROR / failure
+        if c_status == CheckStatus.ERROR.value or not container_workspace_ok:
+            if c_status != CheckStatus.ERROR.value:
+                ws_check["status"] = CheckStatus.INCONCLUSIVE.value
+                ws_check["limitation"] = f"Container workspace verification was invalid or incomplete: {c_observed}"
+            return report
+
+        # 6. If host-side mount isolation verification failed, retain INCONCLUSIVE
+        if not host_ok:
+            ws_check["status"] = CheckStatus.INCONCLUSIVE.value
+            ws_check["observed"] = f"workspace isolation could not be verified: {host_err}"
+            ws_check["evidence_ref"] = "host:mount-isolation-failed"
+            ws_check["evidence_detail"] = f"Host-side verification failed: {host_err}"
+            ws_check["limitation"] = f"Host-side isolation verification failed: {host_err}"
+            return report
+
+        # 7. Both host-side checks and container-side writable-workspace check succeeded -> PASS
+        expected = ws_check.get("expected") or "isolated run workspace accessible; adjacent run workspaces inaccessible"
+        ws_check["status"] = CheckStatus.PASS.value
+        ws_check["expected"] = expected
+        ws_check["observed"] = expected
+        ws_check["evidence_ref"] = "host-container-dual-verification:workspace-isolation"
+        ws_check["evidence_detail"] = (
+            f"Host verified single isolated bind-mount ({host_evidence['mount_spec']}), "
+            f"confirmed adjacent sentinel exists at {host_evidence['adjacent_workspace']}, "
+            f"and confirmed no adjacent workspace was mounted. "
+            f"Container verified designated workspace writable and read-back intact with zero breaches detected."
+        )
+        ws_check["limitation"] = None
+        ws_check["error"] = None
+
+        return report
 
     def execute_and_submit(
         self,

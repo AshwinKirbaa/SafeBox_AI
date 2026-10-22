@@ -1,9 +1,11 @@
+
 """Unit tests for isolation checks verifying PASS, FAIL, ERROR, and INCONCLUSIVE behaviors."""
 
 import errno
 import socket
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from worker.checks.docker_socket import DockerSocketCheck
@@ -20,7 +22,8 @@ from worker.models import CheckStatus
 
 def test_docker_socket_absent():
     check = DockerSocketCheck()
-    with patch.object(Path, "exists", return_value=False), patch.dict("os.environ", {}, clear=True):
+    with patch.object(Path, "exists", return_value=False), \
+         patch.dict("os.environ", {}, clear=True):
         res = check.run({})
         assert res.status == CheckStatus.PASS
         assert res.observed == res.expected
@@ -30,7 +33,11 @@ def test_docker_socket_present(tmp_path):
     check = DockerSocketCheck()
     fake_sock = tmp_path / "docker.sock"
     fake_sock.touch()
-    with patch("worker.checks.docker_socket.PROBE_SOCKET_PATHS", [str(fake_sock)]):
+
+    with patch(
+        "worker.checks.docker_socket.PROBE_SOCKET_PATHS",
+        [str(fake_sock)],
+    ):
         res = check.run({})
         assert res.status == CheckStatus.FAIL
         assert "docker socket detected" in res.observed
@@ -39,7 +46,12 @@ def test_docker_socket_present(tmp_path):
 
 def test_docker_socket_env_var_detected():
     check = DockerSocketCheck()
-    with patch.object(Path, "exists", return_value=False), patch.dict("os.environ", {"DOCKER_HOST": "tcp://evil:2375"}):
+
+    with patch.object(Path, "exists", return_value=False), \
+         patch.dict(
+             "os.environ",
+             {"DOCKER_HOST": "tcp://evil:2375"},
+         ):
         res = check.run({})
         assert res.status == CheckStatus.FAIL
         assert "DOCKER_HOST" in res.observed
@@ -49,7 +61,9 @@ def test_docker_socket_env_var_detected():
 
 def test_user_privileges_non_root():
     check = UserPrivilegesCheck()
-    with patch("os.getuid", return_value=10001, create=True), patch("os.getgid", return_value=10001, create=True):
+
+    with patch("os.getuid", return_value=10001, create=True), \
+         patch("os.getgid", return_value=10001, create=True):
         res = check.run({})
         assert res.status == CheckStatus.PASS
         assert res.observed == res.expected
@@ -57,7 +71,9 @@ def test_user_privileges_non_root():
 
 def test_user_privileges_root_fails():
     check = UserPrivilegesCheck()
-    with patch("os.getuid", return_value=0, create=True), patch("os.getgid", return_value=0, create=True):
+
+    with patch("os.getuid", return_value=0, create=True), \
+         patch("os.getgid", return_value=0, create=True):
         res = check.run({})
         assert res.status == CheckStatus.FAIL
         assert "root" in res.observed
@@ -67,8 +83,16 @@ def test_user_privileges_root_fails():
 
 def test_capabilities_all_dropped():
     check = DroppedCapabilitiesCheck()
-    proc_content = "CapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t0000000000000000\n"
-    with patch.object(Path, "exists", return_value=True), patch.object(Path, "read_text", return_value=proc_content):
+
+    proc_content = (
+        "CapInh:\t0000000000000000\n"
+        "CapPrm:\t0000000000000000\n"
+        "CapEff:\t0000000000000000\n"
+        "CapBnd:\t0000000000000000\n"
+    )
+
+    with patch.object(Path, "exists", return_value=True), \
+         patch.object(Path, "read_text", return_value=proc_content):
         res = check.run({})
         assert res.status == CheckStatus.PASS
         assert res.observed == res.expected
@@ -76,8 +100,16 @@ def test_capabilities_all_dropped():
 
 def test_capabilities_retained_fails():
     check = DroppedCapabilitiesCheck()
-    proc_content = "CapInh:\t0000000000000000\nCapPrm:\t00000000a80425fb\nCapEff:\t00000000a80425fb\nCapBnd:\t00000000a80425fb\n"
-    with patch.object(Path, "exists", return_value=True), patch.object(Path, "read_text", return_value=proc_content):
+
+    proc_content = (
+        "CapInh:\t0000000000000000\n"
+        "CapPrm:\t00000000a80425fb\n"
+        "CapEff:\t00000000a80425fb\n"
+        "CapBnd:\t00000000a80425fb\n"
+    )
+
+    with patch.object(Path, "exists", return_value=True), \
+         patch.object(Path, "read_text", return_value=proc_content):
         res = check.run({})
         assert res.status == CheckStatus.FAIL
         assert "effective capabilities retained" in res.observed
@@ -85,6 +117,7 @@ def test_capabilities_retained_fails():
 
 def test_capabilities_missing_procfs_unavailable():
     check = DroppedCapabilitiesCheck()
+
     with patch.object(Path, "exists", return_value=False):
         res = check.run({})
         assert res.status == CheckStatus.UNAVAILABLE
@@ -97,7 +130,8 @@ def test_resource_limits_cgroup_v2_bounded(tmp_path):
     check = ResourceLimitsCheck()
     cg_dir = tmp_path / "cgroup"
     cg_dir.mkdir()
-    (cg_dir / "memory.max").write_text("268435456\n")  # 256 MiB
+
+    (cg_dir / "memory.max").write_text("268435456\n")
     (cg_dir / "pids.max").write_text("64\n")
 
     res = check.run({"cgroup_root": str(cg_dir)})
@@ -109,6 +143,7 @@ def test_resource_limits_unbounded_fails(tmp_path):
     check = ResourceLimitsCheck()
     cg_dir = tmp_path / "cgroup"
     cg_dir.mkdir()
+
     (cg_dir / "memory.max").write_text("max\n")
     (cg_dir / "pids.max").write_text("max\n")
 
@@ -119,15 +154,40 @@ def test_resource_limits_unbounded_fails(tmp_path):
 
 # --- Workspace Isolation Check Tests ---
 
-def test_workspace_isolation_pass(tmp_path):
+def test_workspace_isolation_inconclusive_when_adjacent_missing(tmp_path):
     check = WorkspaceIsolationCheck()
     ws = tmp_path / "ws1"
     adj = tmp_path / "ws2"
     ws.mkdir()
-    # adj does not exist or has protected file inaccessible
-    res = check.run({"workspace_dir": str(ws), "adjacent_workspace_dir": str(adj)})
+
+    # A missing adjacent workspace is not proof of isolation.
+    res = check.run({
+        "workspace_dir": str(ws),
+        "adjacent_workspace_dir": str(adj),
+    })
+
+    assert res.status == CheckStatus.INCONCLUSIVE
+    assert "could not be verified" in res.observed
+    assert res.limitation is not None
+
+
+def test_workspace_isolation_pass_when_adjacent_empty(tmp_path):
+    check = WorkspaceIsolationCheck()
+    ws = tmp_path / "ws1"
+    adj = tmp_path / "ws2"
+    ws.mkdir()
+    adj.mkdir()
+
+    # The adjacent directory exists and is empty.
+    # No contents are exposed, so no breach is detected.
+    res = check.run({
+        "workspace_dir": str(ws),
+        "adjacent_workspace_dir": str(adj),
+    })
+
     assert res.status == CheckStatus.PASS
     assert res.observed == res.expected
+    assert "1 adjacent path" in res.evidence_detail
 
 
 def test_workspace_isolation_cross_read_breach(tmp_path):
@@ -136,10 +196,15 @@ def test_workspace_isolation_cross_read_breach(tmp_path):
     adj = tmp_path / "ws2"
     ws.mkdir()
     adj.mkdir()
+
     secret = adj / "protected_secret.txt"
     secret.write_text("CONFIDENTIAL_OTHER_WORKER_SECRET")
 
-    res = check.run({"workspace_dir": str(ws), "adjacent_workspace_dir": str(adj)})
+    res = check.run({
+        "workspace_dir": str(ws),
+        "adjacent_workspace_dir": str(adj),
+    })
+
     assert res.status == CheckStatus.FAIL
     assert "cross-workspace isolation breach" in res.observed
 
@@ -148,7 +213,9 @@ def test_workspace_isolation_cross_read_breach(tmp_path):
 
 def test_host_filesystem_protection_pass():
     check = HostFilesystemProtectionCheck()
-    with patch.object(Path, "is_file", return_value=False), patch.object(Path, "is_dir", return_value=False):
+
+    with patch.object(Path, "is_file", return_value=False), \
+         patch.object(Path, "is_dir", return_value=False):
         res = check.run({})
         assert res.status == CheckStatus.PASS
         assert res.observed == res.expected
@@ -159,7 +226,10 @@ def test_host_filesystem_protection_breach(tmp_path):
     fake_shadow = tmp_path / "shadow"
     fake_shadow.write_text("root:$6$hash:19000:0:99999:7:::")
 
-    with patch("worker.checks.host_filesystem.PROHIBITED_HOST_PATHS", [str(fake_shadow)]):
+    with patch(
+        "worker.checks.host_filesystem.PROHIBITED_HOST_PATHS",
+        [str(fake_shadow)],
+    ):
         res = check.run({})
         assert res.status == CheckStatus.FAIL
         assert "prohibited host access detected" in res.observed
@@ -169,13 +239,15 @@ def test_host_filesystem_protection_breach(tmp_path):
 
 def test_network_egress_strict_loopback_only():
     check = NetworkEgressCheck()
-    # Mock interfaces returning only 'lo'
+
     with patch("socket.if_nameindex", return_value=[(1, "lo")]), \
          patch("socket.socket") as mock_sock_cls:
         mock_sock = MagicMock()
         mock_sock_cls.return_value = mock_sock
-        # Connect raises ENETUNREACH
-        mock_sock.connect.side_effect = OSError(errno.ENETUNREACH, "Network unreachable")
+        mock_sock.connect.side_effect = OSError(
+            errno.ENETUNREACH,
+            "Network unreachable",
+        )
 
         res = check.run({})
         assert res.status == CheckStatus.PASS
@@ -184,11 +256,13 @@ def test_network_egress_strict_loopback_only():
 
 def test_network_egress_leak_detected():
     check = NetworkEgressCheck()
-    with patch("socket.if_nameindex", return_value=[(1, "lo"), (2, "eth0")]), \
-         patch("socket.socket") as mock_sock_cls:
+
+    with patch(
+        "socket.if_nameindex",
+        return_value=[(1, "lo"), (2, "eth0")],
+    ), patch("socket.socket") as mock_sock_cls:
         mock_sock = MagicMock()
         mock_sock_cls.return_value = mock_sock
-        # Connect succeeds without error
         mock_sock.connect.return_value = None
 
         res = check.run({})
@@ -198,13 +272,16 @@ def test_network_egress_leak_detected():
 
 def test_network_egress_unproven_timeout_with_eth0():
     check = NetworkEgressCheck()
-    with patch("socket.if_nameindex", return_value=[(1, "lo"), (2, "eth0")]), \
-         patch("socket.socket") as mock_sock_cls:
+
+    with patch(
+        "socket.if_nameindex",
+        return_value=[(1, "lo"), (2, "eth0")],
+    ), patch("socket.socket") as mock_sock_cls:
         mock_sock = MagicMock()
         mock_sock_cls.return_value = mock_sock
         mock_sock.connect.side_effect = socket.timeout("timed out")
 
         res = check.run({})
-        # Should NOT claim PASS because eth0 is present and connection merely timed out
+        # A timeout with eth0 present must not be reported as PASS.
         assert res.status == CheckStatus.INCONCLUSIVE
         assert res.limitation is not None
