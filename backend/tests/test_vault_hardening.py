@@ -33,3 +33,15 @@ def test_vault_write_failure_is_logged_without_secret(tmp_path, monkeypatch, cap
         db.save_connection(name="c", provider="openai", model="m", api_key=SECRET)
     assert "credential vault" in caplog.text.lower()
     assert SECRET not in caplog.text
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL tests only")
+def test_vault_file_windows_acl(tmp_path):
+    db = Database(str(tmp_path / "t.sqlite3"))
+    db.init()
+    db.save_connection(name="c", provider="openai", model="m", api_key=SECRET)
+    vault = tmp_path / ".vault.json"
+    assert vault.exists()
+    assert SECRET not in (tmp_path / "t.sqlite3").read_bytes().decode("latin-1")
+    data = json.loads(vault.read_text(encoding="utf-8"))
+    assert any(SECRET == v for v in data.values())

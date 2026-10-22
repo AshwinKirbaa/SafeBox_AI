@@ -122,6 +122,19 @@ class Database:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(self._secrets_vault))
+            if os.name == "nt":
+                try:
+                    username = os.environ.get("USERNAME")
+                    if username:
+                        import subprocess
+                        subprocess.run(
+                            ["icacls", str(tmp), "/inheritance:r", "/grant:r", f"{username}:(R,W)"],
+                            capture_output=True,
+                            check=False,
+                            timeout=5,
+                        )
+                except Exception:
+                    pass
             os.replace(tmp, vf)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("safebox.db").error(

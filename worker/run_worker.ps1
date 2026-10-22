@@ -1,4 +1,3 @@
-# SafeBox AI - Member 2 Worker Runner Script for Windows PowerShell
 param(
     [string]$RunId,
     [string]$BackendUrl = "http://127.0.0.1:8000",
@@ -6,7 +5,9 @@ param(
     [string]$WorkerId = "worker-1",
     [string]$ImageTag = "safebox-worker:latest",
     [switch]$BuildImage,
-    [switch]$LocalVerificationOnly
+    [switch]$LocalVerificationOnly,
+    [switch]$AutoCreate,
+    [switch]$AllowHostFallback
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,15 +94,32 @@ if ($LocalVerificationOnly) {
 
 # 4. Normal Submission Mode: Ensure RunId exists or auto-create test run
 if (-not $RunId) {
-    Write-Host "[*] No RunId specified. Auto-creating a security test run on $BackendUrl..." -ForegroundColor Yellow
-    $body = @{ test_id = "canary-disclosure"; target = @{ mode = "mock"; mock_behavior = "defended" } } | ConvertTo-Json -Depth 5
-    try {
-        $runResp = Invoke-RestMethod -Method Post -Uri "$BackendUrl/api/security-tests/run" -ContentType "application/json" -Body $body
-        $RunId = $runResp.run_id
-        Write-Host "[+] Auto-created run: $RunId (AI evaluation status: $($runResp.result.status))" -ForegroundColor Green
-    } catch {
-        Write-Error "Failed to create security test run on backend at ${BackendUrl}: $_"
-        exit 1
+    if (-not $AutoCreate) {
+        Write-Host "[*] No -RunId specified. Resolving most recent run from $BackendUrl..." -ForegroundColor Cyan
+        try {
+            $runsResp = Invoke-RestMethod -Method Get -Uri "$BackendUrl/api/security-tests/runs?limit=1" -TimeoutSec 5 -ErrorAction Stop
+            if ($runsResp -and $runsResp.items -and $runsResp.items.Count -gt 0) {
+                $latest = $runsResp.items[0]
+                $RunId = $latest.run_id
+                Write-Host "[+] Resolved latest run: $RunId ($($latest.test_id), $($latest.provider)/$($latest.model))" -ForegroundColor Green
+                Write-Host "    Pass -RunId <id> to verify a specific historical run, or -AutoCreate to create a fresh test run." -ForegroundColor Gray
+            }
+        } catch {
+            Write-Host "[!] Could not fetch runs from ${BackendUrl}: $_" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $RunId) {
+        Write-Host "[*] Auto-creating a security test run on $BackendUrl..." -ForegroundColor Yellow
+        $body = @{ test_id = "canary-disclosure"; target = @{ mode = "mock"; mock_behavior = "defended" } } | ConvertTo-Json -Depth 5
+        try {
+            $runResp = Invoke-RestMethod -Method Post -Uri "$BackendUrl/api/security-tests/run" -ContentType "application/json" -Body $body
+            $RunId = $runResp.run_id
+            Write-Host "[+] Auto-created run: $RunId (AI evaluation status: $($runResp.result.status))" -ForegroundColor Green
+        } catch {
+            Write-Error "Failed to create security test run on backend at ${BackendUrl}: $_"
+            exit 1
+        }
     }
 } else {
     Write-Host "[*] Verifying target run exists on backend: $RunId..." -ForegroundColor Gray
