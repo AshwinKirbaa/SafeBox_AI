@@ -97,14 +97,20 @@ def submit_infrastructure_check(
     if db.get_raw(run_id) is None:
         raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "Run not found."})
 
-    if body.error:
+    if body.error and body.error.strip():
         status = InfraStatus.ERROR
     elif body.reported_state == "PENDING":
         status = InfraStatus.PENDING
     elif body.reported_state == "UNAVAILABLE":
         status = InfraStatus.UNAVAILABLE
     else:
-        status = InfraStatus.PASS if body.observed == body.expected else InfraStatus.FAIL
+        obs = body.observed.strip() if body.observed else ""
+        exp = body.expected.strip() if body.expected else ""
+        status = (
+            InfraStatus.PASS
+            if (obs and exp and body.observed == body.expected)
+            else InfraStatus.FAIL
+        )
     result = InfraCheckResult(**body.model_dump(), status=status, received_at=utc_now())
     try:
         db.add_infra_check(result)

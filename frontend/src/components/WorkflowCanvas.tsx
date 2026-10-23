@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import type { RunRecord, InfraCheckResult, RunSummary } from '../types/safebox'
 import type { AppPage } from '../types/navigation'
+import { SafeBoxMagnet } from './SafeBoxMagnet'
 
 interface WorkflowCanvasProps {
   run: RunRecord | null
@@ -54,9 +55,9 @@ const DEFAULT_POSITIONS: Record<string, NodePosition> = {
   'probe-non-root-execution': { x: 1260, y: 230 },
   'probe-dropped-capabilities': { x: 1260, y: 350 },
   'probe-resource-limits': { x: 1260, y: 470 },
-  'probe-workspace-isolation': { x: 1590, y: 170 },
-  'probe-host-filesystem-protection': { x: 1590, y: 290 },
-  'probe-network-egress': { x: 1590, y: 410 },
+  'probe-workspace-isolation': { x: 1260, y: 590 },
+  'probe-host-filesystem-protection': { x: 1260, y: 710 },
+  'probe-network-egress': { x: 1260, y: 830 },
 }
 
 const INITIAL_DIMENSIONS: Record<string, NodeDimension> = {
@@ -96,7 +97,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
 
   const [positions, setPositions] = useState<Record<string, NodePosition>>(() => {
     try {
-      const saved = localStorage.getItem('safebox_node_positions_v3')
+      const saved = localStorage.getItem('safebox_node_positions_v5')
       if (saved) return JSON.parse(saved)
     } catch {
       // ignore
@@ -163,12 +164,12 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       })
       return () => ro.disconnect()
     }
-  }, [run, positions])
+  }, [run])
 
   // Save node positions
   useEffect(() => {
     try {
-      localStorage.setItem('safebox_node_positions_v3', JSON.stringify(positions))
+      localStorage.setItem('safebox_node_positions_v5', JSON.stringify(positions))
     } catch {
       // ignore
     }
@@ -249,10 +250,28 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     return () => window.removeEventListener('resize', handleWindowResize)
   }, [handleFitToView])
 
+  // Observe canvas surface dimensions dynamically
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined' || !canvasSurfaceRef.current) return
+    let timeoutId: ReturnType<typeof setTimeout>
+    const ro = new ResizeObserver(() => {
+      clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        handleFitToView()
+      }, 80)
+    })
+    ro.observe(canvasSurfaceRef.current)
+    return () => {
+      clearTimeout(timeoutId)
+      ro.disconnect()
+    }
+  }, [handleFitToView])
+
   // Reset to default layout
   const handleResetView = () => {
     setPositions(DEFAULT_POSITIONS)
     try {
+      localStorage.removeItem('safebox_node_positions_v5')
       localStorage.removeItem('safebox_node_positions_v3')
       localStorage.removeItem('safebox_node_positions_v2')
     } catch {
@@ -272,26 +291,38 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y })
   }
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isPanning) {
-      setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
-    } else if (draggedNode) {
-      const dx = (e.clientX - dragStartRef.current.mouseX) / zoom
-      const dy = (e.clientY - dragStartRef.current.mouseY) / zoom
-      setPositions((prev) => ({
-        ...prev,
-        [draggedNode]: {
-          x: Math.round(dragStartRef.current.nodeX + dx),
-          y: Math.round(dragStartRef.current.nodeY + dy),
-        },
-      }))
-    }
-  }
+  // Window-level mouse handlers to prevent dropped drags or sticky pans
+  useEffect(() => {
+    if (!draggedNode && !isPanning) return
 
-  const handleMouseUp = () => {
-    setIsPanning(false)
-    setDraggedNode(null)
-  }
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      if (isPanning) {
+        setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
+      } else if (draggedNode) {
+        const dx = (e.clientX - dragStartRef.current.mouseX) / zoom
+        const dy = (e.clientY - dragStartRef.current.mouseY) / zoom
+        setPositions((prev) => ({
+          ...prev,
+          [draggedNode]: {
+            x: Math.round(dragStartRef.current.nodeX + dx),
+            y: Math.round(dragStartRef.current.nodeY + dy),
+          },
+        }))
+      }
+    }
+
+    const handleWindowMouseUp = () => {
+      setIsPanning(false)
+      setDraggedNode(null)
+    }
+
+    window.addEventListener('mousemove', handleWindowMouseMove)
+    window.addEventListener('mouseup', handleWindowMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove)
+      window.removeEventListener('mouseup', handleWindowMouseUp)
+    }
+  }, [draggedNode, isPanning, panStart, zoom])
 
   // Node drag initiation
   const handleStartNodeDrag = (nodeId: string, e: React.MouseEvent) => {
@@ -307,12 +338,18 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     }
   }
 
-  // Mouse wheel zoom
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault()
-    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92
-    setZoom((z) => Math.min(Math.max(z * zoomFactor, 0.35), 2.0))
-  }
+  // Non-passive mouse wheel zoom to prevent browser console passive-listener warnings
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onCanvasWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92
+      setZoom((z) => Math.min(Math.max(z * zoomFactor, 0.35), 2.0))
+    }
+    el.addEventListener('wheel', onCanvasWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onCanvasWheel)
+  }, [])
 
   // Exact Mathematical Port Center Calculation
   const getNodePortCenter = useCallback(
@@ -380,9 +417,6 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     <div
       className="workflow-editor-wrapper"
       ref={containerRef}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onWheel={handleWheel}
     >
       {/* Top Toolbar */}
       <div className="workflow-toolbar">
@@ -434,24 +468,28 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           >
             <ZoomOut className="icon-xs" />
           </button>
-          <button
-            type="button"
-            className="toolbar-btn"
-            onClick={handleFitToView}
-            title="Fit to View"
-            aria-label="Fit graph to view"
-          >
-            <Maximize2 className="icon-xs" />
-          </button>
-          <button
-            type="button"
-            className="toolbar-btn"
-            onClick={handleResetView}
-            title="Reset Node Positions"
-            aria-label="Reset view layout"
-          >
-            <RotateCcw className="icon-xs" />
-          </button>
+          <SafeBoxMagnet maxDisplacement={4} range={55}>
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={handleFitToView}
+              title="Fit to View"
+              aria-label="Fit graph to view"
+            >
+              <Maximize2 className="icon-xs" />
+            </button>
+          </SafeBoxMagnet>
+          <SafeBoxMagnet maxDisplacement={4} range={55}>
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={handleResetView}
+              title="Reset Node Positions"
+              aria-label="Reset view layout"
+            >
+              <RotateCcw className="icon-xs" />
+            </button>
+          </SafeBoxMagnet>
 
           {/* Grid Toggle */}
           <button
@@ -468,15 +506,17 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
 
           {/* Inspect in Run Details Button */}
           {run && (
-            <button
-              type="button"
-              className="btn-secondary btn-sm"
-              onClick={() => onNavigate('details')}
-              title="Open full inspection report for this run"
-            >
-              <ExternalLink className="icon-xs" />
-              <span>Full Details</span>
-            </button>
+            <SafeBoxMagnet maxDisplacement={4} range={65}>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => onNavigate('details')}
+                title="Open full inspection report for this run"
+              >
+                <ExternalLink className="icon-xs" />
+                <span>Full Details</span>
+              </button>
+            </SafeBoxMagnet>
           )}
         </div>
       </div>

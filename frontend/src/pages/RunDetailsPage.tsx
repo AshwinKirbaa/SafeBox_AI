@@ -3,6 +3,7 @@ import { RunDetailView } from '../components/RunDetailView'
 import type { RunRecord } from '../types/safebox'
 import type { AppPage } from '../types/navigation'
 import { Network, History } from 'lucide-react'
+import { SafeBoxMagnet } from '../components/SafeBoxMagnet'
 
 interface RunDetailsPageProps {
   run: RunRecord | null
@@ -33,24 +34,28 @@ export const RunDetailsPage: React.FC<RunDetailsPageProps> = ({
           </span>
         </div>
         <div className="right-actions">
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={() => onNavigate('workflow')}
-            title="Inspect this run in the interactive node workflow canvas"
-          >
-            <Network className="icon-xs" />
-            <span>Open in Workflow Canvas</span>
-          </button>
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={() => onNavigate('runs')}
-            title="Browse all evaluated runs"
-          >
-            <History className="icon-xs" />
-            <span>Return to Run Explorer</span>
-          </button>
+          <SafeBoxMagnet maxDisplacement={5} range={75}>
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => onNavigate('workflow')}
+              title="Inspect this run in the interactive node workflow canvas"
+            >
+              <Network className="icon-xs" />
+              <span>Open in Workflow Canvas</span>
+            </button>
+          </SafeBoxMagnet>
+          <SafeBoxMagnet maxDisplacement={5} range={75}>
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => onNavigate('runs')}
+              title="Browse all evaluated runs"
+            >
+              <History className="icon-xs" />
+              <span>Return to Run Explorer</span>
+            </button>
+          </SafeBoxMagnet>
         </div>
       </div>
 

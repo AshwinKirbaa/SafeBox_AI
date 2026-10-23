@@ -14,6 +14,7 @@ import type { RunRecord } from '../types/safebox'
 import { AiEvaluationPanel } from './AiEvaluationPanel'
 import { InfraIsolationPanel } from './InfraIsolationPanel'
 import { WorkflowPipelineGraph } from './WorkflowPipelineGraph'
+import { SafeBoxMagnet } from './SafeBoxMagnet'
 
 export interface RunDetailViewProps {
   run: RunRecord | null
@@ -53,15 +54,17 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
         <h3>Unable to Load Security Run</h3>
         <p className="text-muted">{error}</p>
         {onRetry && (
-          <button
-            type="button"
-            className="btn-secondary btn-sm mt-2"
-            onClick={onRetry}
-            data-testid="btn-retry-detail"
-          >
-            <RefreshCw className="icon-xs mr-1" />
-            Retry Audit Load
-          </button>
+          <SafeBoxMagnet maxDisplacement={5} range={75}>
+            <button
+              type="button"
+              className="btn-secondary btn-sm mt-2"
+              onClick={onRetry}
+              data-testid="btn-retry-detail"
+            >
+              <RefreshCw className="icon-xs mr-1" />
+              Retry Audit Load
+            </button>
+          </SafeBoxMagnet>
         )}
       </div>
     )
@@ -121,15 +124,17 @@ export const RunDetailView: React.FC<RunDetailViewProps> = ({
             <span>{error}</span>
           </div>
           {onRetry && (
-            <button
-              type="button"
-              className="btn-secondary btn-xs"
-              onClick={onRetry}
-              data-testid="btn-retry-detail"
-            >
-              <RefreshCw className="icon-xs mr-1" />
-              Retry
-            </button>
+            <SafeBoxMagnet maxDisplacement={4} range={60}>
+              <button
+                type="button"
+                className="btn-secondary btn-xs"
+                onClick={onRetry}
+                data-testid="btn-retry-detail"
+              >
+                <RefreshCw className="icon-xs mr-1" />
+                Retry
+              </button>
+            </SafeBoxMagnet>
           )}
         </div>
       )}

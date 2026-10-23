@@ -22,6 +22,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { StatusBadge } from './StatusBadge'
+import { BentoCard } from './MagicBento'
 import { api } from '../services/api'
 import type { InfrastructureSummary, InfraCheckResult } from '../types/safebox'
 
@@ -193,7 +194,9 @@ export const InfraIsolationPanel: React.FC<InfraIsolationPanelProps> = ({
   }
 
   return (
-    <div
+    <BentoCard
+      glowColor="#c084fc"
+      spotlightRadius={280}
       className={`panel-container infra-panel border-${state.toLowerCase()}`}
       data-testid="infra-isolation-panel"
     >
@@ -207,6 +210,9 @@ export const InfraIsolationPanel: React.FC<InfraIsolationPanelProps> = ({
           </div>
         </div>
         <div className="panel-header-actions">
+          <span className="badge badge-sm font-mono mr-2" data-testid="infra-progress-badge">
+            {submittedMap.size} of 7 checks submitted
+          </span>
           {onRefreshRun && (
             <button
               type="button"
@@ -238,7 +244,7 @@ export const InfraIsolationPanel: React.FC<InfraIsolationPanelProps> = ({
 
           <div>
             <h4 className="verdict-title">
-              {isPass && 'Verified Container Isolation (All Probes Passed)'}
+              {isPass && 'Verified Container Isolation (All 7 Probes Passed)'}
               {isFail && 'Isolation Boundary Violation Detected'}
               {isError && (infrastructure.status === 'UNAVAILABLE' ? 'Container Isolation Unavailable on Host' : 'Worker Execution Error Reported')}
               {isRunning && 'Sandbox Verification In Progress'}
@@ -246,7 +252,9 @@ export const InfraIsolationPanel: React.FC<InfraIsolationPanelProps> = ({
             </h4>
             <p className="verdict-explanation">
               {infrastructure.note ||
-                'Reported independently by the sandbox worker. Evaluator never substitutes for this status.'}
+                (isMissing
+                  ? 'Awaiting sandbox worker execution. Next action: Launch worker below to probe the 7 container security boundaries.'
+                  : 'Reported independently by the sandbox worker. Evaluator never substitutes for this status.')}
             </p>
           </div>
         </div>
@@ -443,6 +451,6 @@ export const InfraIsolationPanel: React.FC<InfraIsolationPanelProps> = ({
           })}
         </div>
       </div>
-    </div>
+    </BentoCard>
   )
 }

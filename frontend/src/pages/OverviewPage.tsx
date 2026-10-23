@@ -4,7 +4,6 @@ import {
   Layers,
   FlaskConical,
   Network,
-  History,
   FileSearch,
   Server,
   Database,
@@ -15,6 +14,8 @@ import {
   ShieldCheck,
   ShieldAlert,
 } from 'lucide-react'
+import MagicBento, { BentoCard, type MagicBentoItem } from '../components/MagicBento'
+import { SafeBoxMagnet } from '../components/SafeBoxMagnet'
 import type { HealthResponse, RunSummary, RunRecord } from '../types/safebox'
 import type { AppPage } from '../types/navigation'
 
@@ -34,7 +35,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   runs,
   totalRuns,
   selectedRun,
-  onSelectRun,
+  onSelectRun: _onSelectRun,
   onNavigate,
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -45,7 +46,68 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   const failCount = runs.filter((r) => r.status === 'FAIL').length
   const passRate = evaluatedCount > 0 ? Math.round((passCount / evaluatedCount) * 100) : 0
 
-  const recentRuns = runs.slice(0, 5)
+  const engineDisplay = health?.target_mode === 'mock'
+    ? 'MOCK SIMULATOR'
+    : health?.ollama?.configured_model || health?.target_mode?.toUpperCase() || 'MOCK'
+
+  const metricBentoItems: MagicBentoItem[] = [
+    {
+      id: 'metric-total-runs',
+      label: 'TELEMETRY ARCHIVE',
+      icon: <Database className="icon-xs text-cyan" />,
+      content: (
+        <div className="stat-card">
+          <span className="stat-label">Total Evaluations</span>
+          <div className="stat-value font-mono">{totalRuns}</div>
+          <span className="stat-sub">Persisted in SQLite database</span>
+        </div>
+      ),
+      onClick: () => onNavigate('runs'),
+    },
+    {
+      id: 'metric-pass-rate',
+      label: 'BENCHMARK ACCURACY',
+      icon: <ShieldCheck className="icon-xs text-emerald" />,
+      content: (
+        <div className="stat-card">
+          <span className="stat-label">Recent Pass Rate</span>
+          <div className="stat-value font-mono text-emerald">{passRate}%</div>
+          <span className="stat-sub">{passCount} passed of {evaluatedCount} recent</span>
+        </div>
+      ),
+      onClick: () => onNavigate('runs'),
+    },
+    {
+      id: 'metric-violations',
+      label: 'POLICY ENFORCEMENT',
+      icon: <ShieldAlert className="icon-xs text-rose" />,
+      content: (
+        <div className="stat-card">
+          <span className="stat-label">Violations Detected</span>
+          <div className="stat-value font-mono text-rose">{failCount}</div>
+          <span className="stat-sub">
+            {failCount === 0 ? 'Zero adversarial leaks' : `${failCount} policy breaches`}
+          </span>
+        </div>
+      ),
+      onClick: () => onNavigate('runs'),
+    },
+    {
+      id: 'metric-engine',
+      label: 'INFERENCE RUNTIME',
+      icon: <Activity className="icon-xs text-cyan" />,
+      content: (
+        <div className="stat-card">
+          <span className="stat-label">Active Engine</span>
+          <div className="stat-value font-mono text-cyan text-sm">{engineDisplay}</div>
+          <span className="stat-sub">
+            {health?.ollama?.reachable ? 'Ollama daemon live' : 'Deterministic mock engine'}
+          </span>
+        </div>
+      ),
+      onClick: () => onNavigate('test-lab'),
+    },
+  ]
 
   const handleCopy = (text: string) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -67,62 +129,103 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             the 7 hardened Linux container sandbox security boundaries.
           </p>
           <div className="hero-actions">
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => onNavigate('test-lab')}
-              data-testid="hero-launch-btn"
-            >
-              <FlaskConical className="icon-xs" />
-              <span>Launch Security Test</span>
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => onNavigate('workflow')}
-            >
-              <Network className="icon-xs" />
-              <span>Open Topology Canvas</span>
-            </button>
+            <SafeBoxMagnet maxDisplacement={6} range={80}>
+              <button
+                type="button"
+                className="btn-primary cursor-target"
+                onClick={() => onNavigate('test-lab')}
+                data-testid="hero-launch-btn"
+                data-cursor-label="Launch Test"
+              >
+                <FlaskConical className="icon-xs" />
+                <span>Launch Security Test</span>
+              </button>
+            </SafeBoxMagnet>
+            <SafeBoxMagnet maxDisplacement={5} range={75}>
+              <button
+                type="button"
+                className="btn-secondary cursor-target"
+                onClick={() => onNavigate('workflow')}
+                data-cursor-label="Canvas"
+              >
+                <Network className="icon-xs" />
+                <span>Open Topology Canvas</span>
+              </button>
+            </SafeBoxMagnet>
           </div>
         </div>
 
-        <div className="hero-stats-grid">
-          <div className="stat-card">
-            <span className="stat-label">Total Evaluations</span>
-            <div className="stat-value font-mono">{totalRuns}</div>
-            <span className="stat-sub">Persisted in SQLite database</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-label">Recent Pass Rate</span>
-            <div className="stat-value font-mono text-emerald">{passRate}%</div>
-            <span className="stat-sub">{passCount} passed of {evaluatedCount} recent</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-label">Violations Detected</span>
-            <div className="stat-value font-mono text-rose">{failCount}</div>
-            <span className="stat-sub">
-              {failCount === 0 ? 'Zero adversarial leaks' : `${failCount} policy breaches`}
-            </span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-label">Active Engine</span>
-            <div className="stat-value font-mono text-cyan text-sm">
-              {health?.target_mode === 'mock'
-                ? 'MOCK SIMULATOR'
-                : health?.ollama?.configured_model || health?.target_mode?.toUpperCase() || 'MOCK'}
+        {/* Operational Security Posture & Engine Readiness Right Column */}
+        <div className="hero-status-panel" data-testid="hero-status-panel">
+          <div className="hero-status-header">
+            <div className="hero-status-header-title">
+              <ShieldCheck className="icon-xs text-cyan" />
+              <span>Operational Posture</span>
             </div>
-            <span className="stat-sub">
-              {health?.ollama?.reachable ? 'Ollama daemon live' : 'Deterministic mock engine'}
+            <span className={`status-pill ${healthError ? 'status-pill-error' : 'status-pill-ok'}`}>
+              <span className="badge-pulse-dot" />
+              <span>{healthError ? 'API OFFLINE' : 'SYSTEM READY'}</span>
             </span>
+          </div>
+
+          <div className="hero-status-grid">
+            <div className="hero-status-tile">
+              <span className="hero-tile-label">INFERENCE TARGET</span>
+              <div className="hero-tile-val font-mono">{engineDisplay}</div>
+              <span className="hero-tile-sub">
+                {health?.ollama?.reachable ? 'Ollama daemon live' : 'Mock fallback engine'}
+              </span>
+            </div>
+
+            <div className="hero-status-tile">
+              <span className="hero-tile-label">CONTAINER SANDBOX</span>
+              <div className="hero-tile-val font-mono">
+                {selectedRun?.infrastructure.status === 'PASS' ? '7/7 Probes Hardened' : 'Hardened Sandbox'}
+              </div>
+              <span className="hero-tile-sub">Member 2 Linux isolation</span>
+            </div>
+
+            <div className="hero-status-tile">
+              <span className="hero-tile-label">TELEMETRY ARCHIVE</span>
+              <div className="hero-tile-val font-mono">
+                {health?.database_ok ? 'SQLite Connected' : 'Database Offline'}
+              </div>
+              <span className="hero-tile-sub">{totalRuns} persistent records</span>
+            </div>
+
+            <div className="hero-status-tile">
+              <span className="hero-tile-label">EVALUATION MODE</span>
+              <div className="hero-tile-val font-mono text-cyan">
+                {selectedRun?.result?.status ? `Last: ${selectedRun.result.status}` : 'Dual-Plane Audit'}
+              </div>
+              <span className="hero-tile-sub">
+                {selectedRun ? `Run: ${selectedRun.run_id.slice(0, 12)}...` : 'Ready for test launch'}
+              </span>
+            </div>
           </div>
         </div>
+      </div>
+
+      {/* Primary Telemetry Metrics MagicBento Grid */}
+      <div className="overview-metrics-bento" data-testid="overview-metrics-bento">
+        <MagicBento
+          items={metricBentoItems}
+          columns={4}
+          rowHeight={120}
+          gap={14}
+          radius={12}
+          glowColor="#38bdf8"
+          enableBorderGlow={true}
+          enableSpotlight={true}
+          spotlightRadius={240}
+          clickEffect={true}
+        />
       </div>
 
       {/* Main Grid: Infrastructure Readiness & Active Audit Spotlight */}
       <div className="overview-bento-grid">
         {/* Card 1: System Readiness Matrix */}
-        <div className="card bento-card">
+        <BentoCard className="bento-card" glowColor="#38bdf8">
           <div className="card-header">
             <div className="card-header-title">
               <Activity className="card-header-icon text-cyan" />
@@ -195,10 +298,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               <span className="badge badge-sm badge-pass font-mono">SUPPORTED</span>
             </div>
           </div>
-        </div>
+        </BentoCard>
 
         {/* Card 2: Active Run Spotlight */}
-        <div className="card bento-card">
+        <BentoCard className="bento-card" glowColor="#c084fc">
           <div className="card-header">
             <div className="card-header-title">
               <FileSearch className="card-header-icon text-violet" />
@@ -226,10 +329,11 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     <code className="font-mono text-sm font-semibold">{selectedRun.run_id}</code>
                     <button
                       type="button"
-                      className="btn-ghost-sm btn-copy-inline"
+                      className="btn-ghost-sm btn-copy-inline cursor-target"
                       onClick={() => handleCopy(selectedRun.run_id)}
                       title="Copy full Run ID"
                       aria-label="Copy Run ID"
+                      data-cursor-label="Copy ID"
                     >
                       {copiedId === selectedRun.run_id ? (
                         <Check className="icon-xs text-emerald" />
@@ -239,14 +343,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     </button>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="btn-secondary btn-xs"
-                  onClick={() => onNavigate('details')}
-                >
-                  <span>Full Report</span>
-                  <ArrowRight className="icon-xs ml-1" />
-                </button>
+                <SafeBoxMagnet maxDisplacement={4} range={65}>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-xs cursor-target"
+                    onClick={() => onNavigate('details')}
+                    data-cursor-label="Report"
+                  >
+                    <span>Full Report</span>
+                    <ArrowRight className="icon-xs ml-1" />
+                  </button>
+                </SafeBoxMagnet>
               </div>
 
               <div className="spotlight-meta-grid">
@@ -309,16 +416,18 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               <div className="spotlight-quick-links">
                 <button
                   type="button"
-                  className="btn-secondary btn-sm"
+                  className="btn-secondary btn-sm cursor-target"
                   onClick={() => onNavigate('workflow')}
+                  data-cursor-label="Canvas"
                 >
                   <Network className="icon-xs" />
                   <span>Inspect in Workflow Canvas</span>
                 </button>
                 <button
                   type="button"
-                  className="btn-primary btn-sm"
+                  className="btn-primary btn-sm cursor-target"
                   onClick={() => onNavigate('details')}
+                  data-cursor-label="Probes"
                 >
                   <FileSearch className="icon-xs" />
                   <span>Inspect Evidence & Probes</span>
@@ -338,110 +447,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               </button>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Recent Evaluations Table */}
-      <div className="card mt-4">
-        <div className="card-header">
-          <div className="card-header-title">
-            <History className="card-header-icon text-cyan" />
-            <h2>Recent Security Evaluations ({recentRuns.length})</h2>
-          </div>
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={() => onNavigate('runs')}
-          >
-            <span>View All in Run Explorer</span>
-            <ArrowRight className="icon-xs ml-1" />
-          </button>
-        </div>
-
-        <div className="table-responsive">
-          <table className="overview-runs-table">
-            <thead>
-              <tr>
-                <th>RUN ID</th>
-                <th>TEST BENCHMARK</th>
-                <th>TARGET MODEL</th>
-                <th>AI VERDICT</th>
-                <th>TIMESTAMP</th>
-                <th>ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentRuns.map((r) => {
-                const isSelected = selectedRun?.run_id === r.run_id
-                return (
-                  <tr key={r.run_id} className={isSelected ? 'row-selected' : ''}>
-                    <td>
-                      <code className="font-mono text-xs">{r.run_id.slice(0, 16)}...</code>
-                    </td>
-                    <td>
-                      <span className="font-semibold text-xs">{r.test_id}</span>
-                      <span className="text-muted text-xs ml-1 font-mono">v{r.test_version}</span>
-                    </td>
-                    <td>
-                      <span className="target-pill font-mono text-xs">
-                        {r.target_mode === 'mock' ? 'MOCK' : r.model || r.target_mode}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge badge-sm font-mono ${
-                        r.status === 'PASS'
-                          ? 'badge-pass'
-                          : r.status === 'FAIL'
-                          ? 'badge-fail'
-                          : 'badge-pending'
-                      }`}>
-                        {r.status || 'PENDING'}
-                      </span>
-                    </td>
-                    <td className="text-muted text-xs font-mono">
-                      {new Date(r.created_at).toLocaleTimeString()}
-                    </td>
-                    <td>
-                      <div className="action-button-group">
-                        <button
-                          type="button"
-                          className="btn-secondary btn-xs"
-                          onClick={() => {
-                            onSelectRun(r.run_id)
-                            onNavigate('details')
-                          }}
-                        >
-                          Details
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-icon-subtle"
-                          onClick={() => {
-                            onSelectRun(r.run_id)
-                            onNavigate('workflow')
-                          }}
-                          title="Open in Workflow Canvas"
-                          aria-label="Open in Workflow Canvas"
-                        >
-                          <Network className="icon-xs" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-              {recentRuns.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="text-center py-4 text-muted">
-                    No runs recorded yet. Launch your first test from the Test Lab.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        </BentoCard>
       </div>
     </div>
   )
 }
+
 

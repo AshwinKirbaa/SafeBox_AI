@@ -226,14 +226,82 @@ describe('WorkflowCanvas Component', () => {
     expect(d3).toMatch(/^M 740 342 C/)
     expect(d3).toMatch(/820 430$/)
 
-    // Edge 4: Docker Isolation to Socket Absence Probe
-    const edgeProbe = screen.getByTestId('edge-docker-probe-docker-socket-absence')
-    expect(edgeProbe).toBeInTheDocument()
-    const dProbe = edgeProbe.getAttribute('d')
-    expect(dProbe).toBeTruthy()
-    // Docker at x:820 + w:360 = 1180, y: 350 + 160/2 = 430. Probe at x:1260, y: 110 + 95/2 = 158 (or rounded)
-    expect(dProbe).toMatch(/^M 1180 430 C/)
-    expect(dProbe).toMatch(/1260 \d+$/)
+    // Edges 4..10: Docker Isolation to all 7 Probes - verify clean bus fan-out to x:1260
+    const probeIds = [
+      'docker-socket-absence',
+      'non-root-execution',
+      'dropped-capabilities',
+      'resource-limits',
+      'workspace-isolation',
+      'host-filesystem-protection',
+      'network-egress',
+    ]
+
+    probeIds.forEach((probeId) => {
+      const edge = screen.getByTestId(`edge-docker-probe-${probeId}`)
+      expect(edge).toBeInTheDocument()
+      const d = edge.getAttribute('d')
+      expect(d).toBeTruthy()
+      // All 7 edges must originate from Docker node output port at (1180, 430)
+      expect(d).toMatch(/^M 1180 430 C/)
+      // And terminate at the probe's left input port at x:1260
+      expect(d).toMatch(/1260 \d+$/)
+    })
+  })
+
+  it('collapses and re-expands the Node Inspector panel', () => {
+    render(
+      <WorkflowCanvas
+        run={mockRun}
+        loading={false}
+        allRuns={mockAllRuns}
+        onSelectRunId={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    )
+
+    // Inspector is open initially
+    expect(screen.getByLabelText('Node Inspector')).toBeInTheDocument()
+
+    // Click collapse button
+    const collapseBtn = screen.getByRole('button', { name: /Collapse inspector/i })
+    fireEvent.click(collapseBtn)
+
+    // Inspector is closed
+    expect(screen.queryByLabelText('Node Inspector')).not.toBeInTheDocument()
+
+    // Expand button is shown
+    const expandBtn = screen.getByRole('button', { name: /Open node inspector/i })
+    expect(expandBtn).toBeInTheDocument()
+
+    // Re-expand inspector
+    fireEvent.click(expandBtn)
+    expect(screen.getByLabelText('Node Inspector')).toBeInTheDocument()
+  })
+
+  it('correctly displays MISSING probe statuses when infrastructure checks are omitted', () => {
+    const unverifiedRun: RunRecord = {
+      ...mockRun,
+      infrastructure: {
+        status: 'MISSING',
+        checks: [],
+      },
+    }
+
+    render(
+      <WorkflowCanvas
+        run={unverifiedRun}
+        loading={false}
+        allRuns={mockAllRuns}
+        onSelectRunId={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    )
+
+    // Probes show MISSING status pills
+    const socketProbe = screen.getByTestId('workflow-probe-docker-socket-absence')
+    expect(socketProbe).toHaveClass('probe-status-missing')
+    expect(socketProbe.querySelector('.probe-status-pill')).toHaveTextContent('MISSING')
   })
 
   it('Plane A node renders responsive two-column grid and full-width verdict banner', () => {

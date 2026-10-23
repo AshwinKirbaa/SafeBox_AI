@@ -58,6 +58,18 @@ class WorkspaceIsolationCheck(BaseIsolationCheck):
                 if child.is_dir() and child.resolve() != workspace_dir.resolve():
                     candidates.append(child)
 
+        # In container environment, /workspaces is the designated multi-run workspaces tree
+        alt_workspaces = Path("/workspaces")
+        if alt_workspaces.exists() and alt_workspaces.resolve() != workspace_dir.resolve():
+            if alt_workspaces not in candidates:
+                candidates.append(alt_workspaces)
+            try:
+                for child in alt_workspaces.iterdir():
+                    if child.is_dir() and child.resolve() != workspace_dir.resolve() and child not in candidates:
+                        candidates.append(child)
+            except (PermissionError, Exception):
+                pass
+
         breaches: list[str] = []
         probed_count = 0
 

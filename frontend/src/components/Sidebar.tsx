@@ -72,6 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onNavigate(btn.id)}
               aria-current={isActive ? 'page' : undefined}
               data-testid={`nav-${btn.id}`}
+              data-cursor-label={btn.label}
             >
               <div className="nav-icon-wrapper">
                 <Icon className="sidebar-nav-icon" />
@@ -89,6 +90,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="sidebar-nav-item"
           onClick={onOpenConnections}
           data-testid="nav-model-connections"
+          data-cursor-label="Providers"
           title="Configure and manage saved inference providers and endpoints"
         >
           <div className="nav-icon-wrapper">

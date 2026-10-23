@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { StatusBadge } from './StatusBadge'
 import { EvidenceList } from './EvidenceList'
+import { BentoCard } from './MagicBento'
 import type { EvaluationResult, EvidenceItem } from '../types/safebox'
 
 interface AiEvaluationPanelProps {
@@ -26,7 +27,7 @@ export const AiEvaluationPanel: React.FC<AiEvaluationPanelProps> = ({
 }) => {
   if (!result) {
     return (
-      <div className="panel-container ai-panel">
+      <BentoCard glowColor="#38bdf8" spotlightRadius={280} className="panel-container ai-panel">
         <div className="panel-header">
           <div className="panel-title-group">
             <Brain className="panel-title-icon text-cyan" />
@@ -41,7 +42,7 @@ export const AiEvaluationPanel: React.FC<AiEvaluationPanelProps> = ({
           <HelpCircle className="empty-icon" />
           <p>No AI evaluation verdict available for this run state.</p>
         </div>
-      </div>
+      </BentoCard>
     )
   }
 
@@ -51,7 +52,11 @@ export const AiEvaluationPanel: React.FC<AiEvaluationPanelProps> = ({
   const isInconclusive = result.status === 'INCONCLUSIVE'
 
   return (
-    <div className={`panel-container ai-panel border-${result.status.toLowerCase()}`}>
+    <BentoCard
+      glowColor="#38bdf8"
+      spotlightRadius={280}
+      className={`panel-container ai-panel border-${result.status.toLowerCase()}`}
+    >
       {/* Panel Top Header */}
       <div className="panel-header">
         <div className="panel-title-group">
@@ -159,6 +164,6 @@ export const AiEvaluationPanel: React.FC<AiEvaluationPanelProps> = ({
 
       {/* Sanitized Model Evidence Sub-Component */}
       <EvidenceList evidence={evidence} />
-    </div>
+    </BentoCard>
   )
 }

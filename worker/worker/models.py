@@ -48,11 +48,23 @@ class InfraCheckSubmission(BaseModel):
 
     @model_validator(mode="after")
     def _validate_state(self) -> "InfraCheckSubmission":
-        if self.reported_state == "COMPLETED" and not self.error:
-            if self.observed is None or self.expected is None:
-                raise ValueError("COMPLETED checks require both 'observed' and 'expected'")
-        if self.reported_state == "UNAVAILABLE" and not (self.error or self.limitation):
-            raise ValueError("UNAVAILABLE checks must explain why via 'error' or 'limitation'")
+        if self.error is not None and not self.error.strip():
+            raise ValueError("'error' cannot be blank or whitespace-only")
+        if self.limitation is not None and not self.limitation.strip():
+            raise ValueError("'limitation' cannot be blank or whitespace-only")
+
+        if self.reported_state == "COMPLETED" and not (self.error and self.error.strip()):
+            if (
+                self.observed is None
+                or not self.observed.strip()
+                or self.expected is None
+                or not self.expected.strip()
+            ):
+                raise ValueError("COMPLETED checks require non-blank 'observed' and 'expected'")
+        if self.reported_state == "UNAVAILABLE" and not (
+            (self.error and self.error.strip()) or (self.limitation and self.limitation.strip())
+        ):
+            raise ValueError("UNAVAILABLE checks must explain why via non-blank 'error' or 'limitation'")
         return self
 
 

@@ -72,11 +72,12 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className="topbar-middle">
         {selectedRun ? (
           <div
-            className="topbar-run-pill"
+            className="topbar-run-pill cursor-target"
             onClick={() => onNavigate('details')}
             title="Click to view full run details"
             role="button"
             tabIndex={0}
+            data-cursor-label="Inspect Run"
           >
             <span className="run-pill-label">ACTIVE RUN:</span>
             <code className="run-pill-id font-mono">
@@ -141,11 +142,12 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* Refresh Action */}
         <button
           type="button"
-          className="btn-refresh"
+          className="btn-refresh cursor-target"
           onClick={onRefresh}
           disabled={loadingHealth}
           title="Refresh dashboard state & data"
           aria-label="Refresh dashboard"
+          data-cursor-label="Refresh"
         >
           <RefreshCw
             className={`refresh-icon ${loadingHealth ? 'spin' : ''}`}
@@ -156,9 +158,10 @@ export const TopBar: React.FC<TopBarProps> = ({
         {activePage !== 'test-lab' && (
           <button
             type="button"
-            className="btn-primary btn-sm btn-quick-launch"
+            className="btn-primary btn-sm btn-quick-launch cursor-target"
             onClick={() => onNavigate('test-lab')}
             data-testid="topbar-launch-btn"
+            data-cursor-label="Launch Test"
           >
             <Play className="icon-xs" />
             <span>Launch Test</span>

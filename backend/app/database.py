@@ -297,15 +297,27 @@ class Database:
         present = {c.status for c in checks}
         status = next(s for s in _INFRA_PRECEDENCE if s in present)
         if status == InfraStatus.PASS:
-            # Never claim isolation is verified from a subset of the required checks.
-            reported = {c.check_id for c in checks}
-            missing = [i for i in REQUIRED_INFRA_CHECKS if i not in reported]
-            if missing:
-                got = len(REQUIRED_INFRA_CHECKS) - len(missing)
-                return InfrastructureSummary(
-                    status=InfraStatus.PENDING, checks=checks,
-                    note=(f"Incomplete: {got} of {len(REQUIRED_INFRA_CHECKS)} required isolation checks "
-                          f"reported (missing: {', '.join(missing)}). PASS requires all of them."))
+            # Never claim isolation is verified from a subset of the required checks,
+            # and require that all checks originate from a single consistent worker.
+            workers = {c.worker_id for c in checks}
+            worker_has_all = any(
+                all(req in {c.check_id for c in checks if c.worker_id == w and c.status == InfraStatus.PASS}
+                    for req in REQUIRED_INFRA_CHECKS)
+                for w in workers
+            )
+            if not worker_has_all:
+                reported = {c.check_id for c in checks}
+                missing = [i for i in REQUIRED_INFRA_CHECKS if i not in reported]
+                if missing:
+                    got = len(REQUIRED_INFRA_CHECKS) - len(missing)
+                    return InfrastructureSummary(
+                        status=InfraStatus.PENDING, checks=checks,
+                        note=(f"Incomplete: {got} of {len(REQUIRED_INFRA_CHECKS)} required isolation checks "
+                              f"reported (missing: {', '.join(missing)}). PASS requires all of them."))
+                else:
+                    return InfrastructureSummary(
+                        status=InfraStatus.PENDING, checks=checks,
+                        note="Incomplete: required isolation checks are split across multiple workers. PASS requires all checks from a single worker.")
         return InfrastructureSummary(status=status, checks=checks)
 
     # -- model connections management ----------------------------------------------

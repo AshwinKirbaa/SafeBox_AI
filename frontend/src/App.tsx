@@ -7,6 +7,7 @@ import { WorkflowPage } from './pages/WorkflowPage'
 import { RunExplorerPage } from './pages/RunExplorerPage'
 import { RunDetailsPage } from './pages/RunDetailsPage'
 import { ModelConnectionsModal } from './components/ModelConnectionsModal'
+import { TargetCursor } from './components/TargetCursor'
 import { api } from './services/api'
 import type { AppPage } from './types/navigation'
 import type {
@@ -293,6 +294,22 @@ export const App: React.FC = () => {
 
   return (
     <div className="safebox-app-shell">
+      {/* Interactive Cyber Reticle Target Cursor */}
+      <TargetCursor
+        targetSelector=".cursor-target, .btn-primary, .btn-secondary, .btn-refresh, .sidebar-nav-item, .topbar-run-pill"
+        cursorColor="#38bdf8"
+        cursorColorOnTarget="#38bdf8"
+        spinDuration={2}
+        hoverDuration={0.2}
+        hideDefaultCursor={false}
+        showLabel={false}
+        matchRadius
+        cornerSize={12}
+        size={36}
+        thickness={2}
+        dotSize={4}
+      />
+
       {/* 1. Persistent Compact Left Sidebar */}
       <Sidebar
         activePage={activePage}

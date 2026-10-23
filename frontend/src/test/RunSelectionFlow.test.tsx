@@ -172,7 +172,9 @@ describe('Run Selection & Inspection Flow Integration', () => {
     })
 
     // Latest run (Run 1) is selected and spotlighted on Overview
-    expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('run_alpha111111111111111111111111')).toBeInTheDocument()
+    })
 
     // Navigate to Run Explorer via sidebar
     fireEvent.click(screen.getByTestId('nav-runs'))

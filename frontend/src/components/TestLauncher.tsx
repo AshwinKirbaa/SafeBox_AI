@@ -8,6 +8,7 @@ import {
   Server,
   AlertTriangle,
 } from 'lucide-react'
+import { SafeBoxMagnet } from './SafeBoxMagnet'
 import type {
   SecurityTestMeta,
   TargetMode,
@@ -166,7 +167,8 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
       </div>
 
       <form onSubmit={handleSubmit} className="launcher-form">
-        <div className="launcher-grid">
+        {/* Row 1: Registered Security Test & Target Engine Mode (Side-by-Side) */}
+        <div className="launcher-form-row launcher-form-row-two-col">
           {/* Test Case Selection */}
           <div className="form-group">
             <label htmlFor="test-select" className="form-label">
@@ -174,10 +176,11 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
             </label>
             <select
               id="test-select"
-              className="form-select"
+              className="form-select cursor-target"
               value={selectedTestId}
               onChange={(e) => setSelectedTestId(e.target.value)}
               disabled={loadingTests || isRunning}
+              data-cursor-label="Benchmark"
             >
               {tests.map((t) => (
                 <option key={t.test_id} value={t.test_id}>
@@ -197,10 +200,11 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
             </label>
             <select
               id="target-mode-select"
-              className="form-select"
+              className="form-select cursor-target"
               value={targetMode}
               onChange={(e) => setTargetMode(e.target.value as TargetMode)}
               disabled={isRunning}
+              data-cursor-label="Engine Mode"
             >
               <option value="mock">Deterministic Mock Simulator</option>
               <option value="ollama">Local Neural Model (Ollama: llama3.2:3b)</option>
@@ -216,9 +220,11 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
                 : 'Select from configured cloud or self-hosted model endpoints'}
             </p>
           </div>
+        </div>
 
-          {/* Target Profile or Model Configuration */}
-          <div className="form-group">
+        {/* Row 2: Target Profile or Model Configuration (Dedicated Full-Width Row) */}
+        <div className="launcher-form-row">
+          <div className="form-group form-group-full">
             <label htmlFor="behavior-select" className="form-label">
               {targetMode === 'mock'
                 ? 'Target Profile & Behavior'
@@ -229,10 +235,11 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
             {targetMode === 'mock' ? (
               <select
                 id="behavior-select"
-                className="form-select"
+                className="form-select cursor-target"
                 value={mockBehavior}
                 onChange={(e) => setMockBehavior(e.target.value as MockBehavior)}
                 disabled={isRunning}
+                data-cursor-label="Profile"
               >
                 {Object.entries(BEHAVIOR_DESCRIPTIONS).map(([key, item]) => (
                   <option key={key} value={key}>
@@ -243,10 +250,11 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
             ) : targetMode === 'connection' ? (
               <select
                 id="behavior-select"
-                className="form-select"
+                className="form-select cursor-target"
                 value={effectiveConnectionId}
                 onChange={(e) => setSelectedConnectionId(e.target.value)}
                 disabled={isRunning}
+                data-cursor-label="Saved Connection"
               >
                 <option value="">-- Choose saved connection --</option>
                 {connections.map((c) => (
@@ -276,46 +284,46 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
                 : 'Configured local model name (llama3.2:3b pre-installed)'}
             </p>
           </div>
-
-          {/* Repeatability Options (only for repeatability test) */}
-          {currentTest?.supports_repeat_options && (
-            <>
-              <div className="form-group">
-                <label className="form-label">
-                  Repeat Executions: <strong>{repeatCount}</strong>
-                </label>
-                <input
-                  type="range"
-                  min={2}
-                  max={10}
-                  value={repeatCount}
-                  onChange={(e) => setRepeatCount(Number(e.target.value))}
-                  className="form-range"
-                  disabled={isRunning}
-                />
-                <p className="form-hint">2 to 10 sequential model inferences</p>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Base Test to Repeat</label>
-                <select
-                  className="form-select"
-                  value={repeatBaseTest}
-                  onChange={(e) => setRepeatBaseTest(e.target.value)}
-                  disabled={isRunning}
-                >
-                  {tests
-                    .filter((t) => !t.supports_repeat_options)
-                    .map((t) => (
-                      <option key={t.test_id} value={t.test_id}>
-                        {t.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            </>
-          )}
         </div>
+
+        {/* Repeatability Options Row (only for repeatability test) */}
+        {currentTest?.supports_repeat_options && (
+          <div className="launcher-form-row launcher-form-row-two-col">
+            <div className="form-group">
+              <label className="form-label">
+                Repeat Executions: <strong>{repeatCount}</strong>
+              </label>
+              <input
+                type="range"
+                min={2}
+                max={10}
+                value={repeatCount}
+                onChange={(e) => setRepeatCount(Number(e.target.value))}
+                className="form-range"
+                disabled={isRunning}
+              />
+              <p className="form-hint">2 to 10 sequential model inferences</p>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Base Test to Repeat</label>
+              <select
+                className="form-select cursor-target"
+                value={repeatBaseTest}
+                onChange={(e) => setRepeatBaseTest(e.target.value)}
+                disabled={isRunning}
+              >
+                {tests
+                  .filter((t) => !t.supports_repeat_options)
+                  .map((t) => (
+                    <option key={t.test_id} value={t.test_id}>
+                      {t.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Capability Warning if model lacks test prerequisite */}
         {capabilityWarning && (
@@ -398,24 +406,27 @@ export const TestLauncher: React.FC<TestLauncherProps> = ({
             )}
           </div>
 
-          <button
-            type="submit"
-            className={`btn-primary ${isRunning ? 'btn-loading' : ''}`}
-            disabled={isRunning || loadingTests || (targetMode === 'connection' && !effectiveConnectionId)}
-            data-testid="run-test-button"
-          >
-            {isRunning ? (
-              <>
-                <span className="btn-spinner" />
-                Evaluating Test...
-              </>
-            ) : (
-              <>
-                <Play className="btn-icon" />
-                Launch Security Test
-              </>
-            )}
-          </button>
+          <SafeBoxMagnet maxDisplacement={6} range={85}>
+            <button
+              type="submit"
+              className={`btn-primary cursor-target ${isRunning ? 'btn-loading' : ''}`}
+              disabled={isRunning || loadingTests || (targetMode === 'connection' && !effectiveConnectionId)}
+              data-testid="run-test-button"
+              data-cursor-label="Launch Test"
+            >
+              {isRunning ? (
+                <>
+                  <span className="btn-spinner" />
+                  Evaluating Test...
+                </>
+              ) : (
+                <>
+                  <Play className="btn-icon" />
+                  Launch Security Test
+                </>
+              )}
+            </button>
+          </SafeBoxMagnet>
         </div>
       </form>
     </div>

@@ -18,8 +18,9 @@ class UserPrivilegesCheck(BaseIsolationCheck):
         if hasattr(os, "getuid"):
             uid = os.getuid()
             gid = os.getgid()
-            if uid == 0 or gid == 0:
-                obs = f"executed as privileged root user (uid={uid}, gid={gid})"
+            groups = os.getgroups() if hasattr(os, "getgroups") else []
+            if uid == 0 or gid == 0 or 0 in groups:
+                obs = f"executed as privileged root user or group (uid={uid}, gid={gid}, groups={groups})"
                 return IsolationCheckResult(
                     check_id=self.check_id,
                     policy_id=self.policy_id,
@@ -28,7 +29,7 @@ class UserPrivilegesCheck(BaseIsolationCheck):
                     expected=expected,
                     observed=obs,
                     evidence_ref="probe:process-credentials",
-                    evidence_detail=f"Process credentials: uid={uid}, gid={gid}",
+                    evidence_detail=f"Process credentials: uid={uid}, gid={gid}, groups={groups}",
                 )
             else:
                 obs = expected
@@ -40,7 +41,7 @@ class UserPrivilegesCheck(BaseIsolationCheck):
                     expected=expected,
                     observed=obs,
                     evidence_ref="probe:process-credentials",
-                    evidence_detail=f"Process credentials: uid={uid}, gid={gid}",
+                    evidence_detail=f"Process credentials: uid={uid}, gid={gid}, groups={groups}",
                 )
         else:
             # Windows host environment

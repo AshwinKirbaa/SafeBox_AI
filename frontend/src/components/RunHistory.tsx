@@ -7,8 +7,11 @@ import {
   Clock,
   RefreshCw,
   Filter,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { StatusBadge } from './StatusBadge'
+import { SafeBoxMagnet } from './SafeBoxMagnet'
 import type { RunSummary } from '../types/safebox'
 
 interface RunHistoryProps {
@@ -44,6 +47,7 @@ export const RunHistory: React.FC<RunHistoryProps> = ({
   const [providerFilter, setProviderFilter] = useState<string>('')
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [modelSearch, setModelSearch] = useState<string>('')
+  const [copiedRunId, setCopiedRunId] = useState<string | null>(null)
 
   const handleApplyFilter = (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -89,14 +93,16 @@ export const RunHistory: React.FC<RunHistoryProps> = ({
         </div>
 
         <div className="history-header-actions">
-          <button
-            className="btn-ghost-sm"
-            onClick={onRefresh}
-            disabled={loading}
-            title="Refresh run history"
-          >
-            <RefreshCw className={`icon-sm ${loading ? 'spin' : ''}`} />
-          </button>
+          <SafeBoxMagnet maxDisplacement={4} range={55}>
+            <button
+              className="btn-ghost-sm"
+              onClick={onRefresh}
+              disabled={loading}
+              title="Refresh run history"
+            >
+              <RefreshCw className={`icon-sm ${loading ? 'spin' : ''}`} />
+            </button>
+          </SafeBoxMagnet>
         </div>
       </div>
 
@@ -208,7 +214,29 @@ export const RunHistory: React.FC<RunHistoryProps> = ({
                     onClick={() => onSelectRun(r.run_id)}
                   >
                     <td className="cell-run-id">
-                      <code>{r.run_id.slice(0, 16)}...</code>
+                      <div className="run-id-cell-group" title={`Full Run ID: ${r.run_id}`}>
+                        <code>{r.run_id.slice(0, 16)}...</code>
+                        <button
+                          type="button"
+                          className="btn-icon-copy-mini"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (navigator.clipboard) {
+                              navigator.clipboard.writeText(r.run_id)
+                              setCopiedRunId(r.run_id)
+                              setTimeout(() => setCopiedRunId(null), 1600)
+                            }
+                          }}
+                          aria-label={`Copy run ID ${r.run_id}`}
+                          title={copiedRunId === r.run_id ? 'Copied!' : 'Copy full Run ID'}
+                        >
+                          {copiedRunId === r.run_id ? (
+                            <Check className="icon-2xs text-emerald" />
+                          ) : (
+                            <Copy className="icon-2xs text-muted" />
+                          )}
+                        </button>
+                      </div>
                     </td>
                     <td>
                       <span className="test-name-tag">{r.test_id}</span>
@@ -230,7 +258,13 @@ export const RunHistory: React.FC<RunHistoryProps> = ({
                         {r.state}
                       </span>
                     </td>
-                    <td className="text-xs text-muted cell-time">
+                    <td
+                      className="text-xs text-muted cell-time"
+                      title={new Date(r.created_at).toLocaleString([], {
+                        dateStyle: 'medium',
+                        timeStyle: 'medium',
+                      })}
+                    >
                       {new Date(r.created_at).toLocaleTimeString([], {
                         hour: '2-digit',
                         minute: '2-digit',
@@ -238,19 +272,21 @@ export const RunHistory: React.FC<RunHistoryProps> = ({
                       })}
                     </td>
                     <td>
-                      <button
-                        type="button"
-                        className={`btn-select-run ${isSelected ? 'btn-viewing' : ''}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onSelectRun(r.run_id)
-                        }}
-                        aria-label={isSelected ? `Viewing run ${r.run_id}. Click to view details.` : `Inspect run ${r.run_id}`}
-                        title={isSelected ? 'Currently viewing in detail panel. Click to view details.' : 'Inspect this run in detail view'}
-                      >
-                        <ExternalLink className="btn-mini-icon" />
-                        <span>{isSelected ? 'Viewing' : 'Inspect'}</span>
-                      </button>
+                      <SafeBoxMagnet maxDisplacement={4} range={50}>
+                        <button
+                          type="button"
+                          className={`btn-select-run ${isSelected ? 'btn-viewing' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onSelectRun(r.run_id)
+                          }}
+                          aria-label={isSelected ? `Viewing run ${r.run_id}. Click to view details.` : `Inspect run ${r.run_id}`}
+                          title={isSelected ? 'Currently viewing in detail panel. Click to view details.' : 'Inspect this run in detail view'}
+                        >
+                          <ExternalLink className="btn-mini-icon" />
+                          <span>{isSelected ? 'Viewing' : 'Inspect'}</span>
+                        </button>
+                      </SafeBoxMagnet>
                     </td>
                   </tr>
                 )

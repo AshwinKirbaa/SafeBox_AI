@@ -173,10 +173,7 @@ describe('OverviewPage Component', () => {
     ).toBeInTheDocument()
   })
 
-  it('renders Recent Security Evaluations table with actions', () => {
-    const handleSelectRun = vi.fn()
-    const handleNavigate = vi.fn()
-
+  it('renders operational posture panel in the hero right column', () => {
     render(
       <OverviewPage
         health={mockHealth}
@@ -184,20 +181,35 @@ describe('OverviewPage Component', () => {
         runs={mockRuns}
         totalRuns={2}
         selectedRun={mockSelectedRun}
-        onSelectRun={handleSelectRun}
-        onNavigate={handleNavigate}
+        onSelectRun={vi.fn()}
+        onNavigate={vi.fn()}
       />
     )
 
-    expect(screen.getByText(/Recent Security Evaluations/i)).toBeInTheDocument()
-    expect(screen.getAllByText('canary-disclosure').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('prompt-injection')).toBeInTheDocument()
+    expect(screen.getByTestId('hero-status-panel')).toBeInTheDocument()
+    expect(screen.getByText('Operational Posture')).toBeInTheDocument()
+    expect(screen.getByText('INFERENCE TARGET')).toBeInTheDocument()
+    expect(screen.getByText('CONTAINER SANDBOX')).toBeInTheDocument()
+    expect(screen.getByText('TELEMETRY ARCHIVE')).toBeInTheDocument()
+    expect(screen.getByText('EVALUATION MODE')).toBeInTheDocument()
+    expect(screen.getByText('SYSTEM READY')).toBeInTheDocument()
+  })
 
-    // Action button
-    const detailButtons = screen.getAllByRole('button', { name: /^Details$/i })
-    expect(detailButtons.length).toBe(2)
-    fireEvent.click(detailButtons[0])
-    expect(handleSelectRun).toHaveBeenCalledWith('run_eval_pass_1234567890abcdef')
-    expect(handleNavigate).toHaveBeenCalledWith('details')
+  it('does not render Recent Security Evaluations table on Overview (dedicated to Run Explorer)', () => {
+    render(
+      <OverviewPage
+        health={mockHealth}
+        healthError={null}
+        runs={mockRuns}
+        totalRuns={2}
+        selectedRun={mockSelectedRun}
+        onSelectRun={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByText(/Recent Security Evaluations/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /View All in Run Explorer/i })).not.toBeInTheDocument()
   })
 })

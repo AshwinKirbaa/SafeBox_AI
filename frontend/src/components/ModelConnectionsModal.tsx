@@ -12,6 +12,8 @@ import {
   Zap,
   ShieldCheck,
 } from 'lucide-react'
+import { SafeBoxMagnet } from './SafeBoxMagnet'
+import { BentoCard } from './MagicBento'
 import { api } from '../services/api'
 import type {
   ProviderMeta,
@@ -228,6 +230,18 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
     }
   }
 
+  // Escape key handler for accessible modal dismissal
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
+
   if (!isOpen) return null
 
   const selectedMeta = providers.find((p) => p.id === provider)
@@ -375,25 +389,27 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                 )}
               </button>
 
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                onClick={() => handleLiveVerify()}
-                disabled={verifying || testing || !model.trim()}
-                title="Execute real inference and run security evaluation"
-              >
-                {verifying && !verifyingId ? (
-                  <>
-                    <RefreshCw className="icon-xs spin" />
-                    Running Live Verification...
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="icon-xs text-emerald" />
-                    Live Audit & Verify
-                  </>
-                )}
-              </button>
+              <SafeBoxMagnet maxDisplacement={5} range={75}>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => handleLiveVerify()}
+                  disabled={verifying || testing || !model.trim()}
+                  title="Execute real inference and run security evaluation"
+                >
+                  {verifying && !verifyingId ? (
+                    <>
+                      <RefreshCw className="icon-xs spin" />
+                      Running Live Verification...
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="icon-xs text-emerald" />
+                      Live Audit & Verify
+                    </>
+                  )}
+                </button>
+              </SafeBoxMagnet>
 
               <div className="form-actions">
                 {editingId && (
@@ -405,13 +421,15 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                     Cancel
                   </button>
                 )}
-                <button
-                  type="submit"
-                  className="btn-primary btn-sm"
-                  disabled={saving || !name.trim() || !model.trim()}
-                >
-                  {saving ? 'Saving...' : editingId ? 'Update Connection' : 'Save Connection'}
-                </button>
+                <SafeBoxMagnet maxDisplacement={5} range={75}>
+                  <button
+                    type="submit"
+                    className="btn-primary btn-sm"
+                    disabled={saving || !name.trim() || !model.trim()}
+                  >
+                    {saving ? 'Saving...' : editingId ? 'Update Connection' : 'Save Connection'}
+                  </button>
+                </SafeBoxMagnet>
               </div>
             </div>
 
@@ -542,7 +560,12 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
             ) : (
               <div className="connections-grid">
                 {connections.map((c) => (
-                  <div key={c.connection_id} className="connection-card">
+                  <BentoCard
+                    key={c.connection_id}
+                    glowColor="#38bdf8"
+                    spotlightRadius={220}
+                    className="connection-card"
+                  >
                     <div className="conn-card-header">
                       <div>
                         <strong>{c.name}</strong>
@@ -571,6 +594,7 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                           className="btn-icon-mini"
                           onClick={() => handleStartEdit(c)}
                           title="Edit connection"
+                          aria-label={`Edit connection ${c.name}`}
                         >
                           <Edit2 className="icon-xs" />
                         </button>
@@ -578,6 +602,7 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                           className="btn-icon-mini text-red"
                           onClick={() => handleDelete(c.connection_id)}
                           title="Delete connection"
+                          aria-label={`Delete connection ${c.name}`}
                         >
                           <Trash2 className="icon-xs" />
                         </button>
@@ -598,14 +623,14 @@ export const ModelConnectionsModal: React.FC<ModelConnectionsModalProps> = ({
                         <span className="detail-label">Credentials:</span>
                         <span className="text-xs">
                           {c.has_api_key ? (
-                            <span className="text-emerald">Configured ({c.masked_api_key})</span>
+                            <span className="text-emerald font-medium">Configured</span>
                           ) : (
-                            <span className="text-muted">None (Open/Local)</span>
+                            <span className="text-muted">Not configured</span>
                           )}
                         </span>
                       </div>
                     </div>
-                  </div>
+                  </BentoCard>
                 ))}
               </div>
             )}
