@@ -131,10 +131,11 @@ cd "d:\Projects\SafeBox ai"
 .\safebox-ai\backend\.venv\Scripts\python.exe -m pytest -v safebox-ai\worker\tests
 ```
 
-All 23 isolation tests pass, covering:
-- Unit tests for all checks under PASS, FAIL, ERROR, and INCONCLUSIVE conditions
+77 isolation tests pass (39 unit/contract + 38 automated negative), covering:
+- Unit tests for all checks under PASS, FAIL, ERROR, UNAVAILABLE, and INCONCLUSIVE conditions
 - Mocking network interfaces and raw socket errors (`ENETUNREACH`, `EADDRNOTAVAIL`, `ETIMEDOUT`)
 - End-to-end integration tests submitting to Member 1's backend API and validating HTTP 201, 401, 409, and 422 contracts.
+- Automated negative tests (`test_isolation_negative.py`) verifying every check rejects its corresponding unsafe condition via both mock fixtures and live disposable Docker containers.
 
 ---
 
@@ -144,4 +145,7 @@ All 23 isolation tests pass, covering:
 > **Important Isolation Limitations**:
 > - Ordinary Linux container controls (namespaces, cgroups, capability drops) provide process isolation and resource limits, **not** mathematical proof of host-escape protection against zero-day Linux kernel vulnerabilities.
 > - When running outside a container (e.g. host fallback mode when Docker Desktop is offline), POSIX capabilities and cgroups are reported as `UNAVAILABLE` with clear diagnostic limitations; SafeBox never reports an unexecuted check as a pass.
-> - Network egress verification requires raw IP socket probing combined with interface verification. A connection failure caused by DNS misconfiguration or external timeout is marked `INCONCLUSIVE` rather than `PASS` unless interface-level restriction to loopback (`lo`) or explicit `ENETUNREACH` is proven.
+> - **Fixed-path probe scope**: `docker-socket-absence` and `host-filesystem-protection` verify known high-risk paths (`PROBE_SOCKET_PATHS`, `PROHIBITED_HOST_PATHS`). They do not perform exhaustive recursive filesystem scans and cannot detect custom unlisted host mount paths.
+> - **TCP-based egress scope**: `network-egress` verifies interface restriction (`lo` only) and tests direct TCP socket connections across multiple IP endpoints. It relies on the container's network namespace (`--network=none`) rather than live packet inspection for UDP or raw ICMP protocols.
+> - Connection failures caused by DNS misconfiguration or external timeout with non-loopback interfaces present are marked `INCONCLUSIVE` rather than `PASS` unless interface-level restriction to loopback (`lo`) or explicit `ENETUNREACH` is proven.
+

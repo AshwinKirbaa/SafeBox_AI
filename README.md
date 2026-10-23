@@ -7,6 +7,7 @@ It supports **universal inference targets across 3 tiers** (Ollama, OpenAI-Compa
 See [UNIVERSAL_MODELS.md](UNIVERSAL_MODELS.md) for complete architecture, provider matrix, SSRF protection, and connection API reference.
 Sandbox isolation (Member 2) and the dashboard (Member 3) integrate through [INTEGRATION.md](INTEGRATION.md).
 
+```text
 backend/app/
   config.py            validated settings (env prefix SAFEBOX_)
   schemas.py           Pydantic models, UTC timestamps, statuses
