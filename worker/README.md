@@ -148,4 +148,3 @@ cd "d:\Projects\SafeBox ai"
 > - **Fixed-path probe scope**: `docker-socket-absence` and `host-filesystem-protection` verify known high-risk paths (`PROBE_SOCKET_PATHS`, `PROHIBITED_HOST_PATHS`). They do not perform exhaustive recursive filesystem scans and cannot detect custom unlisted host mount paths.
 > - **TCP-based egress scope**: `network-egress` verifies interface restriction (`lo` only) and tests direct TCP socket connections across multiple IP endpoints. It relies on the container's network namespace (`--network=none`) rather than live packet inspection for UDP or raw ICMP protocols.
 > - Connection failures caused by DNS misconfiguration or external timeout with non-loopback interfaces present are marked `INCONCLUSIVE` rather than `PASS` unless interface-level restriction to loopback (`lo`) or explicit `ENETUNREACH` is proven.
-
