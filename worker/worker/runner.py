@@ -1,5 +1,6 @@
 """Executes isolation checks and produces structured results."""
 
+import time
 from typing import Any, Type
 from .checks import ALL_CHECKS, BaseIsolationCheck
 from .models import CheckStatus, InfraCheckSubmission, IsolationCheckResult
@@ -13,6 +14,7 @@ class IsolationCheckRunner:
         results: list[IsolationCheckResult] = []
         for cls in self.check_classes:
             check_inst = cls()
+            started = time.perf_counter()
             try:
                 res = check_inst.run(context)
             except Exception as e:
@@ -25,6 +27,7 @@ class IsolationCheckRunner:
                     observed="unhandled exception in check",
                     error=f"Exception executing {check_inst.check_id}: {e}",
                 )
+            res.duration_ms = max(0, round((time.perf_counter() - started) * 1000))
             results.append(res)
         return results
 

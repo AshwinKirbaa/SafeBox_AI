@@ -11,8 +11,11 @@ Implements native adapters for:
 """
 from __future__ import annotations
 
+import datetime
+import email.utils
 import json
 import logging
+import random
 import time
 from typing import Any
 
@@ -31,6 +34,7 @@ from app.services.model_adapter import (
     TargetRequest,
     TargetResponse,
     TargetResponseError,
+    TargetServerOverloadError,
     TargetTimeout,
     TargetUnsupportedError,
     TokenUsage,
@@ -370,7 +374,7 @@ class AnthropicAdapter(ModelAdapter):
                     reachable=True,
                     model_available=self.model in models if models else False,
                     latency_ms=latency,
-                    discovered_models=tuple(models or self.KNOWN_MODELS),
+                    discovered_models=tuple(models),
                     capabilities=self.capabilities,
                     error_message=None if models else "Anthropic returned an empty model list; model availability is unconfirmed.",
                 )
@@ -391,15 +395,15 @@ class AnthropicAdapter(ModelAdapter):
 
     def discover_models(self, timeout_seconds: float = 5.0) -> list[str]:
         if not self.api_key:
-            return self.KNOWN_MODELS
+            return []
         client, owned = self._http()
         try:
             status_code, models, _ = self._fetch_models_paginated(client, timeout_seconds=timeout_seconds)
             if status_code == 200 and models:
                 return sorted(models)
-            return self.KNOWN_MODELS
+            return []
         except Exception:
-            return self.KNOWN_MODELS
+            return []
         finally:
             if owned:
                 client.close()
@@ -434,6 +438,10 @@ class GeminiAdapter(ModelAdapter):
         base_url: str = "https://generativelanguage.googleapis.com",
         timeout_seconds: float = 30.0,
         max_response_chars: int = 4000,
+        fallback_model: str | None = None,
+        max_retries: int = 3,
+        base_backoff: float = 0.5,
+        max_backoff: float = 8.0,
         client: httpx.Client | None = None,
     ) -> None:
         self.api_key = api_key
@@ -442,6 +450,10 @@ class GeminiAdapter(ModelAdapter):
         self.timeout_seconds = timeout_seconds
         self.max_response_chars = max_response_chars
         self.max_http_bytes = max_response_chars * 4 + 16384
+        self.fallback_model = fallback_model
+        self.max_retries = max_retries
+        self.base_backoff = base_backoff
+        self.max_backoff = max_backoff
         self._client = client
         self.capabilities = ModelCapabilities(
             text=True,
@@ -451,10 +463,35 @@ class GeminiAdapter(ModelAdapter):
             tool_calling=True,
         )
 
-    def _http(self) -> tuple[httpx.Client, bool]:
+    def _http(self, timeout: float | None = None) -> tuple[httpx.Client, bool]:
         if self._client is not None:
             return self._client, False
-        return httpx.Client(timeout=self.timeout_seconds, follow_redirects=False), True
+        to = timeout if timeout is not None else self.timeout_seconds
+        return httpx.Client(timeout=to, follow_redirects=False), True
+
+    @staticmethod
+    def _parse_retry_after(headers: httpx.Headers) -> float | None:
+        raw = headers.get("retry-after")
+        if not raw:
+            return None
+        raw = raw.strip()
+        # 1. Decimal or integer seconds
+        try:
+            val = float(raw)
+            return max(0.0, val)
+        except ValueError:
+            pass
+        # 2. RFC 7231 / RFC 9110 HTTP-date format
+        try:
+            dt = email.utils.parsedate_to_datetime(raw)
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            return max(0.0, (dt - now).total_seconds())
+        except Exception:
+            return None
 
     def generate(self, request: TargetRequest) -> TargetResponse:
         self.validate_capabilities(request)
@@ -465,14 +502,15 @@ class GeminiAdapter(ModelAdapter):
                 "or set the GEMINI_API_KEY environment variable in backend/.env."
             )
 
-        # Normalize model ID: remove leading 'models/' if present so path is not duplicated
         clean_model = self.model
         if clean_model.startswith("models/"):
             clean_model = clean_model[7:]
 
         endpoint = f"{self.base_url}/v1beta/models/{clean_model}:generateContent"
-        # Key goes in the header only: a ?key= URL parameter is written to httpx/proxy logs.
-        headers = {"x-goog-api-key": self.api_key.strip()}
+        headers = {
+            "x-goog-api-key": self.api_key.strip(),
+            "X-Server-Timeout": str(max(1, int(self.timeout_seconds))),
+        }
 
         user_parts: list[dict[str, Any]] = [{"text": request.user_prompt}]
         if request.images:
@@ -492,56 +530,246 @@ class GeminiAdapter(ModelAdapter):
                 "maxOutputTokens": max(16, self.max_response_chars // 3),
             },
         }
+        # Gemini 3.x thinks at medium/high depth by default. Canary benchmarks
+        # need a short direct response, so use low thinking to prevent needless
+        # multi-minute reasoning while preserving real model inference.
+        if clean_model.startswith("gemini-3"):
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "LOW"}
         if request.system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": request.system_prompt}]}
         if request.schema_constraint:
             payload["generationConfig"]["responseMimeType"] = "application/json"
 
         start = time.perf_counter()
-        client, owned = self._http()
+        deadline = start + self.timeout_seconds
+        max_attempts = max(1, self.max_retries + 1)
+        fallback_used = False
+        active_model = clean_model
+        last_error: TargetError | None = None
+
+        models_to_try = [clean_model]
+        if self.fallback_model:
+            fallback_clean = self.fallback_model
+            if fallback_clean.startswith("models/"):
+                fallback_clean = fallback_clean[7:]
+            if fallback_clean != clean_model:
+                models_to_try.append(fallback_clean)
+        # Never silently test a different model. A fallback is used only when the
+        # saved connection explicitly configured one, so the reported target and
+        # the model that produced the evidence remain identical by default.
+
         body = bytearray()
-        try:
-            with client.stream("POST", endpoint, headers=headers, json=payload,
-                               timeout=self.timeout_seconds) as resp:
-                if resp.status_code >= 400:
-                    data_preview = resp.read().decode("utf-8", errors="ignore")
-                    error_msg = None
-                    try:
-                        err_json = json.loads(data_preview)
-                        if isinstance(err_json, dict) and "error" in err_json:
-                            error_msg = err_json["error"].get("message")
-                    except Exception:
-                        pass
+        response_received = False
 
-                    clean_err = sanitize_secrets_from_text(error_msg or data_preview)
-                    if resp.status_code in (400, 401, 403):
-                        if "API_KEY_INVALID" in data_preview or "API key not valid" in data_preview:
-                            raise TargetAuthError(clean_err or "Gemini API key is invalid or unauthorized.")
-                        if resp.status_code == 403:
-                            raise TargetAuthError(clean_err or "Gemini API access denied (HTTP 403).")
-                    if resp.status_code == 404:
-                        raise TargetModelNotFoundError(clean_err or f"Gemini model '{self.model}' not found.")
-                    if resp.status_code == 429:
-                        raise TargetRateLimitError(clean_err or "Gemini API quota/rate limit exceeded (HTTP 429).")
-                    raise TargetHTTPError(clean_err or f"Gemini API returned HTTP {resp.status_code}.")
+        for m_idx, current_model in enumerate(models_to_try):
+            active_model = current_model
+            endpoint = f"{self.base_url}/v1beta/models/{active_model}:generateContent"
+            if m_idx > 0:
+                fallback_used = True
+                logger.warning(
+                    "Gemini primary model '%s' failed. Attempting fallback model '%s'.",
+                    clean_model, active_model
+                )
 
-                for chunk in resp.iter_bytes():
-                    body.extend(chunk)
-                    if len(body) > self.max_http_bytes:
-                        raise TargetResponseError("Gemini response exceeded maximum size limit.")
-                    if time.perf_counter() - start > self.timeout_seconds:
-                        raise TargetTimeout("Gemini inference timed out.")
-        except TargetError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise TargetTimeout("Gemini connection timed out.") from exc
-        except httpx.TransportError as exc:
-            clean = sanitize_secrets_from_text(str(exc))
-            raise TargetConnectionError(f"Could not connect to Gemini service: {clean}") from exc
-        finally:
-            if owned:
-                client.close()
+            for attempt in range(max_attempts):
+                now = time.perf_counter()
+                time_remaining = deadline - now
+                if time_remaining <= 0:
+                    if last_error:
+                        raise last_error
+                    raise TargetTimeout("Gemini inference request timed out before sending request.")
 
+                body = bytearray()
+                req_timeout = min(self.timeout_seconds, time_remaining)
+
+                client, owned = self._http(req_timeout)
+                try:
+                    with client.stream("POST", endpoint, headers=headers, json=payload,
+                                       timeout=req_timeout) as resp:
+                        status_code = resp.status_code
+                        if status_code >= 400:
+                            data_preview = resp.read().decode("utf-8", errors="ignore")
+                            error_msg = None
+                            try:
+                                err_json = json.loads(data_preview)
+                                if isinstance(err_json, dict) and "error" in err_json:
+                                    error_msg = err_json["error"].get("message")
+                            except Exception:
+                                pass
+
+                            clean_err = sanitize_secrets_from_text(error_msg or data_preview, self.api_key)
+                            lower_err = clean_err.lower()
+
+                            # 1. Permanent Auth Failures (400 API_KEY_INVALID, 401, 403) - Never retry
+                            if status_code in (400, 401, 403):
+                                if "API_KEY_INVALID" in data_preview or "api key not valid" in lower_err:
+                                    raise TargetAuthError(clean_err or "Gemini API key is invalid or unauthorized.", status_code=status_code)
+                                if status_code == 403:
+                                    raise TargetAuthError(clean_err or "Gemini API access denied (HTTP 403).", status_code=403)
+                                if status_code == 401:
+                                    raise TargetAuthError(clean_err or "Gemini API unauthorized (HTTP 401).", status_code=401)
+                                raise TargetHTTPError(clean_err or f"Gemini API returned HTTP {status_code}.", status_code=status_code)
+
+                            # 2. Permanent Model Not Found (404) - If fallbacks available, switch to fallback
+                            if status_code == 404:
+                                exc = TargetModelNotFoundError(clean_err or f"Gemini model '{active_model}' not found.", status_code=404)
+                                last_error = exc
+                                if m_idx < len(models_to_try) - 1:
+                                    logger.warning(
+                                        "Gemini model '%s' not found (404). Switching to fallback model '%s'.",
+                                        active_model, models_to_try[m_idx + 1]
+                                    )
+                                    break
+                                raise exc
+
+                            # 3. Permanent Client Errors (4xx other than 429) - Never retry
+                            if 400 <= status_code < 500 and status_code != 429:
+                                raise TargetHTTPError(clean_err or f"Gemini API returned HTTP {status_code}.", status_code=status_code)
+
+                            # 4. Classify transient retryable vs permanent errors:
+                            if status_code == 429:
+                                exc = TargetRateLimitError(
+                                    clean_err or "Gemini API rate limit or quota exceeded (HTTP 429).",
+                                    status_code=429,
+                                )
+                                is_transient = True
+                            else:
+                                is_overload = (
+                                    status_code in (502, 503, 504)
+                                    or "overloaded" in lower_err
+                                    or "high demand" in lower_err
+                                    or "unavailable" in lower_err
+                                )
+                                is_transient = is_overload or status_code == 500
+
+                                if is_overload:
+                                    exc = TargetServerOverloadError(
+                                        clean_err or f"Gemini model '{active_model}' is experiencing high demand (HTTP {status_code}).",
+                                        status_code=status_code,
+                                    )
+                                else:
+                                    exc = TargetHTTPError(
+                                        clean_err or f"Gemini API returned HTTP {status_code}.",
+                                        status_code=status_code,
+                                    )
+
+                            last_error = exc
+
+                            # If fallbacks are available and this model is overloaded or quota-exhausted,
+                            # switch quickly to next model rather than stalling in long backoffs
+                            if m_idx < len(models_to_try) - 1 and (attempt >= 1 or "quota" in lower_err or "rate-limits" in lower_err or status_code == 503):
+                                logger.warning(
+                                    "Gemini model '%s' is unavailable or quota-limited (%d). Switching to fallback model '%s'.",
+                                    active_model, status_code, models_to_try[m_idx + 1]
+                                )
+                                break
+
+                            # Evaluate retry if transient and attempts remain
+                            if is_transient and attempt < max_attempts - 1:
+                                retry_after = self._parse_retry_after(resp.headers)
+                                base_delay = self.base_backoff * (2 ** attempt)
+                                jitter = random.uniform(0.001, min(0.25, max(0.001, base_delay * 0.25)))
+                                exp_backoff = min(self.max_backoff, base_delay + jitter)
+                                if retry_after is not None:
+                                    delay = min(self.max_backoff, max(retry_after, exp_backoff))
+                                else:
+                                    delay = min(self.max_backoff, exp_backoff)
+
+                                remaining = deadline - time.perf_counter()
+
+                                if retry_after is not None and retry_after > remaining:
+                                    logger.warning(
+                                        "Gemini API Retry-After (%.2fs) exceeds remaining deadline (%.2fs). Terminating retries.",
+                                        retry_after, remaining,
+                                    )
+                                    raise exc
+
+                                if delay < remaining and (time.perf_counter() + delay) < deadline:
+                                    logger.warning(
+                                        "Gemini API transient failure HTTP %d (attempt %d/%d). Retrying in %.2fs. %s",
+                                        status_code, attempt + 1, max_attempts, delay, clean_err,
+                                    )
+                                    time.sleep(delay)
+                                    continue
+                                else:
+                                    logger.warning(
+                                        "Gemini API retry backoff (%.2fs) exceeds remaining deadline (%.2fs). Terminating retries.",
+                                        delay, remaining,
+                                    )
+                                    raise exc
+
+                            # Non-retryable or retries exhausted for this attempt
+                            raise exc
+
+                        # HTTP 200 OK: stream chunks
+                        for chunk in resp.iter_bytes():
+                            body.extend(chunk)
+                            if len(body) > self.max_http_bytes:
+                                raise TargetResponseError("Gemini response exceeded maximum size limit.")
+                            if time.perf_counter() > deadline:
+                                raise TargetTimeout("Gemini inference timed out.")
+
+                        response_received = True
+                        break
+
+                except (TargetAuthError, TargetModelNotFoundError, TargetResponseError):
+                    raise
+                except (TargetServerOverloadError, TargetRateLimitError, TargetHTTPError) as exc:
+                    last_error = exc
+                    if m_idx < len(models_to_try) - 1:
+                        break
+                    raise
+                except httpx.TimeoutException as exc:
+                    last_error = TargetTimeout(
+                        f"Gemini model '{clean_model}' timed out after "
+                        f"{self.timeout_seconds:g} seconds without a response. The request was cancelled safely."
+                    )
+                    if attempt < max_attempts - 1:
+                        base_delay = self.base_backoff * (2 ** attempt)
+                        jitter = random.uniform(0.001, min(0.25, max(0.001, base_delay * 0.25)))
+                        exp_backoff = min(self.max_backoff, base_delay + jitter)
+                        remaining = deadline - time.perf_counter()
+                        if exp_backoff < remaining and (time.perf_counter() + exp_backoff) < deadline:
+                            logger.warning(
+                                "Gemini API timeout on attempt %d/%d. Retrying in %.2fs.",
+                                attempt + 1, max_attempts, exp_backoff,
+                            )
+                            time.sleep(exp_backoff)
+                            continue
+                    if m_idx < len(models_to_try) - 1:
+                        break
+                    raise last_error from exc
+                except httpx.TransportError as exc:
+                    clean = sanitize_secrets_from_text(str(exc), self.api_key)
+                    last_error = TargetConnectionError(f"Could not connect to Gemini service: {clean}")
+                    if attempt < max_attempts - 1:
+                        base_delay = self.base_backoff * (2 ** attempt)
+                        jitter = random.uniform(0.001, min(0.25, max(0.001, base_delay * 0.25)))
+                        exp_backoff = min(self.max_backoff, base_delay + jitter)
+                        remaining = deadline - time.perf_counter()
+                        if exp_backoff < remaining and (time.perf_counter() + exp_backoff) < deadline:
+                            logger.warning(
+                                "Gemini API transport error on attempt %d/%d: %s. Retrying in %.2fs.",
+                                attempt + 1, max_attempts, clean, exp_backoff,
+                            )
+                            time.sleep(exp_backoff)
+                            continue
+                    if m_idx < len(models_to_try) - 1:
+                        break
+                    raise TargetConnectionError(f"Could not connect to Gemini service: {clean}") from exc
+                finally:
+                    if owned:
+                        client.close()
+
+            if response_received:
+                break
+
+        if not response_received:
+            if last_error:
+                raise last_error
+            raise TargetResponseError("No response received from Gemini API.")
+
+        # Parse JSON body
         try:
             data = json.loads(bytes(body))
             candidates = data.get("candidates", [])
@@ -562,14 +790,23 @@ class GeminiAdapter(ModelAdapter):
         text, truncated = clamp_output(text, self.max_response_chars)
         latency = int((time.perf_counter() - start) * 1000)
 
+        raw_details = None
+        if fallback_used:
+            raw_details = {
+                "fallback_applied": True,
+                "configured_model": self.model,
+                "effective_model": active_model,
+            }
+
         return TargetResponse(
             text=text,
             truncated=truncated,
             adapter=self.name,
-            model=self.model,
+            model=active_model,
             latency_ms=latency,
             token_usage=usage,
             provider=self.provider,
+            raw_details=raw_details,
         )
 
     def _fetch_models_paginated(
@@ -702,7 +939,7 @@ class GeminiAdapter(ModelAdapter):
         finally:
             if owned:
                 client.close()
-        return self.KNOWN_MODELS
+        return []
 
 
 # --------------------------------------------------------------------------- #

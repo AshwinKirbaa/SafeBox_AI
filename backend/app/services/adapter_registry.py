@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, is_loopback_host
 from app.schemas import MockBehavior, TargetConfig, TargetMode
 from app.services.generic_http_adapter import GenericHTTPAdapter
 from app.services.mock_adapter import MockAdapter
@@ -61,7 +62,43 @@ SUPPORTED_PROVIDERS_META = [
         "description": "Universal connector for any server adhering to the OpenAI /v1/chat/completions specification.",
         "requires_api_key": False,
         "requires_base_url": True,
-        "default_base_url": "https://api.openai.com/v1",
+        "default_base_url": "",
+        "default_model": "default",
+        "is_remote": True,
+        "capabilities": {"text": True, "vision": True, "audio": False, "structured_output": True, "tool_calling": True},
+    },
+    {
+        "id": "xai",
+        "name": "xAI Grok API",
+        "tier": "A",
+        "description": "xAI Grok models through the OpenAI-compatible inference API.",
+        "requires_api_key": True,
+        "requires_base_url": False,
+        "default_base_url": "https://api.x.ai/v1",
+        "default_model": "default",
+        "is_remote": True,
+        "capabilities": {"text": True, "vision": True, "audio": False, "structured_output": True, "tool_calling": True},
+    },
+    {
+        "id": "groq",
+        "name": "GroqCloud API",
+        "tier": "A",
+        "description": "Groq-hosted models through its OpenAI-compatible API.",
+        "requires_api_key": True,
+        "requires_base_url": False,
+        "default_base_url": "https://api.groq.com/openai/v1",
+        "default_model": "default",
+        "is_remote": True,
+        "capabilities": {"text": True, "vision": True, "audio": True, "structured_output": True, "tool_calling": True},
+    },
+    {
+        "id": "openrouter",
+        "name": "OpenRouter API",
+        "tier": "A",
+        "description": "Multi-provider model routing through the OpenAI-compatible OpenRouter API.",
+        "requires_api_key": True,
+        "requires_base_url": False,
+        "default_base_url": "https://openrouter.ai/api/v1",
         "default_model": "default",
         "is_remote": True,
         "capabilities": {"text": True, "vision": True, "audio": False, "structured_output": True, "tool_calling": True},
@@ -168,6 +205,9 @@ PROVIDER_ENV_KEYS: dict[str, list[str]] = {
     "openai": ["OPENAI_API_KEY", "SAFEBOX_OPENAI_API_KEY"],
     "anthropic": ["ANTHROPIC_API_KEY", "SAFEBOX_ANTHROPIC_API_KEY"],
     "huggingface": ["HF_TOKEN", "HUGGINGFACE_API_KEY", "SAFEBOX_HF_TOKEN"],
+    "xai": ["XAI_API_KEY", "SAFEBOX_XAI_API_KEY"],
+    "groq": ["GROQ_API_KEY", "SAFEBOX_GROQ_API_KEY"],
+    "openrouter": ["OPENROUTER_API_KEY", "SAFEBOX_OPENROUTER_API_KEY"],
 }
 
 
@@ -223,8 +263,19 @@ class AdapterRegistry:
         base_url = target.base_url or (connection_data.get("base_url") if connection_data else None)
         raw_key = target.api_key or (connection_data.get("api_key") if connection_data else None)
         api_key = resolve_api_key(provider, raw_key)
-        timeout = target.timeout_seconds or settings.inference_timeout_seconds
+        remote_providers = {"openai", "anthropic", "gemini", "huggingface", "xai", "groq", "openrouter"}
+        is_remote_openai_compatible = provider == "openai_compatible" and not (
+            base_url and is_loopback_host(urlparse(base_url).hostname or "")
+        )
+        default_timeout = (
+            settings.remote_inference_timeout_seconds
+            if provider in remote_providers or is_remote_openai_compatible
+            else settings.inference_timeout_seconds
+        )
+        timeout = target.timeout_seconds or default_timeout
         max_chars = settings.max_response_chars
+
+        fallback_model = target.fallback_model or (connection_data.get("fallback_model") if connection_data else None)
 
         if provider == "mock":
             behavior = target.mock_behavior or MockBehavior.defended
@@ -249,6 +300,26 @@ class AdapterRegistry:
                 allow_private=True,
                 client=client,
             )
+
+        if provider in {"xai", "groq", "openrouter"}:
+            provider_defaults = {
+                "xai": "https://api.x.ai/v1",
+                "groq": "https://api.groq.com/openai/v1",
+                "openrouter": "https://openrouter.ai/api/v1",
+            }
+            adapter = OpenAICompatibleAdapter(
+                base_url=base_url or provider_defaults[provider],
+                model=model or "default",
+                api_key=api_key,
+                extra_headers=target.custom_headers,
+                timeout_seconds=timeout,
+                max_response_chars=max_chars,
+                allow_localhost=False,
+                allow_private=False,
+                client=client,
+            )
+            adapter.provider = provider
+            return adapter
 
         if provider == "generic_http":
             url = base_url or (connection_data.get("base_url") if connection_data else "")
@@ -281,7 +352,15 @@ class AdapterRegistry:
         if provider == "gemini":
             mod = model or "gemini-2.0-flash"
             url = base_url or "https://generativelanguage.googleapis.com"
-            return GeminiAdapter(api_key=api_key, model=mod, base_url=url, timeout_seconds=timeout, max_response_chars=max_chars, client=client)
+            return GeminiAdapter(
+                api_key=api_key,
+                model=mod,
+                base_url=url,
+                timeout_seconds=timeout,
+                max_response_chars=max_chars,
+                fallback_model=fallback_model,
+                client=client,
+            )
 
         if provider == "huggingface":
             mod = model or "meta-llama/Llama-3.2-3B-Instruct"

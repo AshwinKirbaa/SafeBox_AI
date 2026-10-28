@@ -82,6 +82,21 @@ class TargetMode(str, Enum):
     custom = "custom"
 
 
+class ModelType(str, Enum):
+    """Inference contract used to validate and exercise a configured model."""
+
+    chat = "chat"
+    embedding = "embedding"
+    vision = "vision"
+    image_generation = "image_generation"
+    speech_to_text = "speech_to_text"
+    text_to_speech = "text_to_speech"
+    classification = "classification"
+    regression = "regression"
+    reranking = "reranking"
+    custom = "custom"
+
+
 class MockBehavior(str, Enum):
     vulnerable = "vulnerable"
     defended = "defended"
@@ -168,6 +183,8 @@ class TargetConfig(StrictModel):
     response_path: str | None = None
     temperature: float | None = None
     timeout_seconds: float | None = None
+    fallback_model: str | None = None
+    model_type: ModelType = ModelType.chat
 
     @model_validator(mode="after")
     def _mode_specific_fields(self) -> "TargetConfig":
@@ -273,9 +290,12 @@ class InfraCheckSubmission(StrictModel):
     policy_id: _Short
     policy_version: _Short
     reported_state: Literal["COMPLETED", "PENDING", "UNAVAILABLE"] = "COMPLETED"
+    reported_verdict: Literal["PASS", "FAIL", "ERROR"] | None = None
     observed: str | None = Field(None, max_length=500)
     expected: str | None = Field(None, max_length=500)
     evidence_ref: str | None = Field(None, max_length=256)
+    evidence_detail: str | None = Field(None, max_length=2000)
+    duration_ms: int | None = Field(None, ge=0)
     timestamp: UtcDatetime
     error: str | None = Field(None, max_length=500)
     limitation: str | None = Field(None, max_length=500)
@@ -295,6 +315,10 @@ class InfraCheckSubmission(StrictModel):
                 or not self.expected.strip()
             ):
                 raise ValueError("COMPLETED checks require non-blank 'observed' and 'expected'")
+        if self.reported_verdict == "ERROR" and not (self.error and self.error.strip()):
+            raise ValueError("reported_verdict ERROR requires a non-blank 'error'")
+        if self.reported_state != "COMPLETED" and self.reported_verdict is not None:
+            raise ValueError("reported_verdict is only valid for COMPLETED checks")
         if self.reported_state == "UNAVAILABLE" and not (
             (self.error and self.error.strip()) or (self.limitation and self.limitation.strip())
         ):
@@ -413,12 +437,15 @@ class ModelCapabilitiesSchema(StrictModel):
 class SavedConnectionCreate(StrictModel):
     name: str = Field(min_length=1, max_length=64)
     provider: str = Field(min_length=1, max_length=32)
-    model: str = Field(min_length=1, max_length=128)
+    # Connections represent provider access. A concrete model is selected later
+    # from provider discovery in the Test Lab.
+    model: str = Field("connection-default", min_length=1, max_length=128)
     base_url: str | None = None
     api_key: str | None = None
     custom_headers: dict[str, str] | None = None
     request_template: dict[str, Any] | None = None
     response_path: str | None = None
+    model_type: ModelType = ModelType.chat
 
 
 class SavedConnectionUpdate(StrictModel):
@@ -429,6 +456,7 @@ class SavedConnectionUpdate(StrictModel):
     custom_headers: dict[str, str] | None = None
     request_template: dict[str, Any] | None = None
     response_path: str | None = None
+    model_type: ModelType | None = None
 
 
 class SavedConnectionResponse(StrictModel):
@@ -442,6 +470,7 @@ class SavedConnectionResponse(StrictModel):
     custom_headers: dict[str, str] | None = None
     request_template: dict[str, Any] | None = None
     response_path: str | None = None
+    model_type: ModelType = ModelType.chat
     capabilities: ModelCapabilitiesSchema | None = None
     is_remote: bool = False
     created_at: UtcDatetime
@@ -458,6 +487,7 @@ class ConnectionTestRequest(StrictModel):
     base_url: str | None = None
     api_key: str | None = None
     connection_id: str | None = None
+    model_type: ModelType | None = None
 
 
 class ConnectionTestResponse(StrictModel):
@@ -467,6 +497,8 @@ class ConnectionTestResponse(StrictModel):
     capabilities: ModelCapabilitiesSchema | None = None
     discovered_models: list[str] = Field(default_factory=list)
     error_message: str | None = None
+    model_type: ModelType = ModelType.chat
+    compatible: bool | None = None
 
 
 class ConnectionLiveVerifyRequest(StrictModel):
@@ -474,6 +506,8 @@ class ConnectionLiveVerifyRequest(StrictModel):
     target: TargetConfig | None = None
     test_id: TestId = "canary-disclosure"
     model_override: str | None = None
+    fallback_model: str | None = None
+    model_type: ModelType | None = None
 
 
 class ConnectionLiveVerifyResponse(StrictModel):
@@ -490,6 +524,12 @@ class ConnectionLiveVerifyResponse(StrictModel):
     token_usage: TokenUsageSummary | None = None
     explanation: str | None = None
     error_message: str | None = None
+    error_kind: str | None = None
+    http_status: int | None = None
+    model_type: ModelType = ModelType.chat
+    verification_kind: Literal["security_audit", "contract_probe"] = "security_audit"
+    verification_status: Literal["PASS", "FAIL", "ERROR"] | None = None
+    verification_details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProviderMetaResponse(StrictModel):

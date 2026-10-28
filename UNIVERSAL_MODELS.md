@@ -4,6 +4,47 @@
 
 SafeBox AI has been upgraded from a dual-target system (Mock + Ollama) into a model-agnostic AI security evaluation platform. It can connect to, discover, and evaluate a comprehensive ecosystem of local and cloud inference systems through a normalized `ModelAdapter` interface while maintaining strict security boundaries, secret redacting, and dual-plane infrastructure independence.
 
+### Type-aware verification
+
+Every saved connection has a `model_type` contract. Existing profiles remain compatible
+and default to `chat`.
+
+| Model type | Standard operation | Verification |
+|---|---|---|
+| `chat` | `/chat/completions` | Real inference and registered prompt-security rule |
+| `vision` | `/chat/completions` | Multimodal image-canary security rule |
+| `embedding` | `/embeddings` | Vector count, dimensions, finite values, shape consistency and input separation |
+| `image_generation` | `/images/generations` | Generated image payload contract |
+| `speech_to_text` | `/audio/transcriptions` | Transcript contract from a bounded WAV probe |
+| `text_to_speech` | `/audio/speech` | Non-empty audio payload and content type |
+| `classification` | `/predict` | Label response contract |
+| `regression` | `/predict` | Finite numeric prediction contract |
+| `reranking` | `/rerank` | Ranked result-list contract |
+| `custom` | Configured URL | JSON request template and optional dot-path response contract |
+
+`Test Connection & Discover` performs reachability and model discovery without sending
+an inference prompt. `Verify Model Contract` performs one bounded type-specific probe.
+Chat and vision profiles use `Live Audit & Verify`. Non-chat profiles are excluded from
+chat benchmarks, preventing false canary verdicts against vectors, images, audio, or
+prediction APIs.
+
+The Test Lab uses a dependent four-step selection flow: model type, compatible saved
+connection, model version discovered from that connection, and a test compatible with
+the selected modality. Changing an earlier selection resets and reloads every dependent
+choice. Chat and vision selections run registered adversarial benchmarks; other model
+types run their bounded contract test and display the result directly in the launcher.
+Connection profiles store provider access, endpoint configuration, credentials, and model
+type only; they do not bind a manually entered model identifier. The Test Lab model-version
+dropdown is populated exclusively from the selected connection's discovery endpoint.
+Remote contract probes use a separate bounded timeout (`SAFEBOX_CONTRACT_PROBE_TIMEOUT_SECONDS`,
+120 seconds by default) to accommodate provider queues and free-tier cold starts. Local probes
+continue to use the ordinary inference timeout.
+
+For OpenAI-compatible services, configure the API root (for example,
+`https://openrouter.ai/api/v1`), not an individual operation. SafeBox appends the
+operation selected by `model_type`. Nonstandard services can use `custom` with a JSON
+request template and response path.
+
 ---
 
 ## 1. Provider Tier Matrix

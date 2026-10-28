@@ -38,6 +38,7 @@ from app.services.model_adapter import (
 )
 from app.services.ollama_adapter import OllamaAdapter
 from app.services.test_registry import SecurityCase, TestRegistry
+from app.services.activity_logger import log_security_test_run, log_test_dispatched
 
 logger = logging.getLogger("safebox.runner")
 
@@ -120,6 +121,10 @@ class SecurityTestRunner:
                 target_dict["request_template"] = conn_data["request_template"]
             if not target_dict.get("response_path") and conn_data.get("response_path"):
                 target_dict["response_path"] = conn_data["response_path"]
+            if not target_dict.get("fallback_model") and conn_data.get("fallback_model"):
+                target_dict["fallback_model"] = conn_data["fallback_model"]
+            if conn_data.get("model_type") and "model_type" not in request.target.model_fields_set:
+                target_dict["model_type"] = conn_data["model_type"]
 
             conn_provider = target_dict.get("provider")
             if conn_provider and conn_provider != "mock":
@@ -134,6 +139,12 @@ class SecurityTestRunner:
                 test_id=request.test_id,
                 target=TargetConfig(**target_dict),
                 options=request.options,
+            )
+
+        if request.target.model_type.value not in ("chat", "vision"):
+            raise InvalidRunOptions(
+                f"Security benchmark '{request.test_id}' requires a chat or vision model; "
+                f"connection type '{request.target.model_type.value}' must use its type-specific contract probe."
             )
 
         effective_provider = request.target.provider or (conn_data.get("provider") if conn_data else None)
@@ -219,7 +230,7 @@ class SecurityTestRunner:
                   adapter: ModelAdapter, repeat_count: int, request: RunRequest) -> None:
         deadline = time.monotonic() + self.settings.max_run_seconds
         if base is None:
-            ex = self._single_execution(0, case, adapter, request)
+            ex = self._single_execution(0, case, adapter, request, raw.run_id)
             raw.executions.append(ex)
             self._copy_verdict(raw, ex)
             return
@@ -229,7 +240,7 @@ class SecurityTestRunner:
                 raw.executions.append(self._error_execution(
                     i, base, "timeout", "Run deadline exceeded before this execution."))
                 break
-            raw.executions.append(self._single_execution(i, base, adapter, request))
+            raw.executions.append(self._single_execution(i, base, adapter, request, raw.run_id))
         statuses = [e.status for e in raw.executions]
         verdict, agree, rate = evaluator.aggregate_repeats(case, statuses)
         raw.status, raw.rule_id, raw.rule_version = verdict.status, verdict.rule_id, verdict.rule_version
@@ -273,7 +284,7 @@ class SecurityTestRunner:
             limitations=list(verdict.limitations),
         )
 
-    def _single_execution(self, index: int, case: SecurityCase, adapter: ModelAdapter, request: RunRequest) -> RawExecution:
+    def _single_execution(self, index: int, case: SecurityCase, adapter: ModelAdapter, request: RunRequest, run_id: str = "") -> RawExecution:
         started = utc_now()
         case_input = case.build_input()
         digest = hashlib.sha256(
@@ -304,15 +315,78 @@ class SecurityTestRunner:
             temperature=request.target.temperature or 0.0,
         )
 
+        log_test_dispatched(
+            run_id=run_id or "direct",
+            test_id=case.test_id,
+            test_name=case.name,
+            category=case.category.value if hasattr(case.category, "value") else str(case.category),
+            provider=getattr(adapter, "provider", adapter.name),
+            model=adapter.model,
+            system_prompt=case_input.system_prompt,
+            user_prompt=case_input.user_prompt,
+        )
+
         try:
             resp = adapter.generate(req_payload)
         except TargetUnsupportedError as exc:
+            log_security_test_run(
+                run_id=run_id or "direct",
+                test_id=case.test_id,
+                test_name=case.name,
+                category=case.category.value if hasattr(case.category, "value") else str(case.category),
+                expected_behavior=case.expected_behavior,
+                provider=getattr(adapter, "provider", adapter.name),
+                model=adapter.model,
+                system_prompt=case_input.system_prompt,
+                user_prompt=case_input.user_prompt,
+                verdict="UNSUPPORTED",
+                explanation=exc.public_message,
+                rule_id=case.rule_id,
+                rule_version=case.rule_version,
+                matched_indicators=["unsupported"],
+            )
             return self._unsupported_execution(index, case, exc.public_message, digest, started)
         except TargetError as exc:
+            log_security_test_run(
+                run_id=run_id or "direct",
+                test_id=case.test_id,
+                test_name=case.name,
+                category=case.category.value if hasattr(case.category, "value") else str(case.category),
+                expected_behavior=case.expected_behavior,
+                provider=getattr(adapter, "provider", adapter.name),
+                model=adapter.model,
+                system_prompt=case_input.system_prompt,
+                user_prompt=case_input.user_prompt,
+                verdict="ERROR",
+                explanation=exc.public_message,
+                rule_id=case.rule_id,
+                rule_version=case.rule_version,
+                matched_indicators=[f"target_{exc.kind}"],
+            )
             return self._error_execution(index, case, exc.kind, exc.public_message, digest, started)
 
         verdict = evaluator.evaluate(case, resp.text, resp.truncated)
         token_usage_dict = resp.token_usage.to_dict() if resp.token_usage else None
+
+        log_security_test_run(
+            run_id=run_id or "direct",
+            test_id=case.test_id,
+            test_name=case.name,
+            category=case.category.value if hasattr(case.category, "value") else str(case.category),
+            expected_behavior=case.expected_behavior,
+            provider=resp.provider or getattr(adapter, "provider", adapter.name),
+            model=adapter.model,
+            system_prompt=case_input.system_prompt,
+            user_prompt=case_input.user_prompt,
+            verdict=verdict.status.value if hasattr(verdict.status, "value") else str(verdict.status),
+            explanation=verdict.explanation,
+            rule_id=verdict.rule_id,
+            rule_version=verdict.rule_version,
+            matched_indicators=list(verdict.matched_indicators),
+            latency_ms=resp.latency_ms,
+            token_usage=token_usage_dict,
+            output_preview=resp.text,
+        )
 
         return RawExecution(
             index=index, test_id=case.test_id, test_version=case.version, started_at=started,

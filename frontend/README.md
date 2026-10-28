@@ -1,32 +1,16 @@
-# React + TypeScript + Vite
+# SafeBox AI cinematic UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite + Three.js + Framer Motion + GSAP + Tailwind. Preserves the midnight design, diamond cursor and combined GhostFibers/AeroShards background.
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm ci
+npm run dev
+npm test
+npm run build
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Read BACKEND_INTEGRATION.md before connecting to the supplied FastAPI backend. Development /api requests proxy to http://127.0.0.1:8000. The public hosted preview does not run your Python backend.
+
+The application includes health/readiness, provider connection CRUD, model discovery and probing, registered test execution, paginated run exploration, detailed evidence, Docker-worker launch and activity logs. Backend-owned settings are read-only in the UI. No credentials or runtime data are bundled.
+
+Some original UI blocks are adaptations of supplied concepts. GhostFibers adapts the user-supplied shader source; AeroShards is an original compatible implementation. Browser GPU and real-provider end-to-end verification remain outstanding.

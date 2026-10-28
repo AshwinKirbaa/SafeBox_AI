@@ -1,4 +1,9 @@
-"""Check that sensitive host files and mounts are not accessible."""
+"""Check that prohibited host mounts are not exposed to the container.
+
+Container-owned files such as /etc/shadow are not evidence of host exposure.  The
+check therefore combines mount-table inspection with probes of explicit host mount
+locations instead of treating ordinary container paths as host files.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -13,15 +18,6 @@ PROHIBITED_HOST_PATHS = [
     "/mnt/c",
     "/mnt/host",
     "/run/host",
-    # Sensitive credentials / system state
-    "/etc/shadow",
-    "/etc/sudoers",
-    "/etc/sudoers.d",
-    "/root/.ssh",
-    "/root/.bash_history",
-    # Kernel / hardware debug mounts
-    "/proc/kcore",
-    "/proc/sysrq-trigger",
     # Windows system files if running or mounted
     r"C:\Windows\System32\config\SAM",
     r"C:\Users",
@@ -36,6 +32,26 @@ class HostFilesystemProtectionCheck(BaseIsolationCheck):
     def run(self, context: dict[str, Any]) -> IsolationCheckResult:
         expected = "no prohibited host paths mounted or accessible"
         accessible_targets: list[str] = []
+        mount_evidence: list[str] = []
+        mountinfo_verified = False
+
+        # mountinfo identifies actual mount boundaries.  It lets us distinguish the
+        # container's own /etc files from a host bind mount targeting /etc or /root.
+        try:
+            mount_lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace").splitlines()
+            mountinfo_verified = bool(mount_lines)
+            for line in mount_lines:
+                left, _, right = line.partition(" - ")
+                fields = left.split()
+                if len(fields) < 5:
+                    continue
+                target = fields[4].replace("\\040", " ")
+                source = right.split()[1] if len(right.split()) > 1 else "unknown"
+                if target in ("/host", "/hostfs", "/mnt/host", "/run/host", "/root") or target.startswith("/host/"):
+                    mount_evidence.append(f"{source} -> {target}")
+        except (FileNotFoundError, PermissionError, OSError):
+            # Path probes below still provide useful runtime evidence.
+            pass
 
         for p_str in PROHIBITED_HOST_PATHS:
             try:
@@ -56,8 +72,9 @@ class HostFilesystemProtectionCheck(BaseIsolationCheck):
             except Exception:
                 pass
 
-        if accessible_targets:
-            obs = f"prohibited host access detected: {'; '.join(accessible_targets)}"
+        breaches = mount_evidence + accessible_targets
+        if breaches:
+            obs = f"prohibited host access detected: {'; '.join(breaches)}"
             return IsolationCheckResult(
                 check_id=self.check_id,
                 policy_id=self.policy_id,
@@ -66,7 +83,20 @@ class HostFilesystemProtectionCheck(BaseIsolationCheck):
                 expected=expected,
                 observed=obs,
                 evidence_ref="probe:host-filesystem",
-                evidence_detail=f"Probed {len(PROHIBITED_HOST_PATHS)} paths. Breaches: {accessible_targets}",
+                evidence_detail=f"Inspected mountinfo and probed {len(PROHIBITED_HOST_PATHS)} host mount paths. Breaches: {breaches}",
+            )
+
+        if not mountinfo_verified:
+            return IsolationCheckResult(
+                check_id=self.check_id,
+                policy_id=self.policy_id,
+                policy_version=self.policy_version,
+                status=CheckStatus.INCONCLUSIVE,
+                expected=expected,
+                observed="host mount table could not be inspected",
+                evidence_ref="probe:host-filesystem",
+                evidence_detail=f"Probed {len(PROHIBITED_HOST_PATHS)} explicit host mount paths, but /proc/self/mountinfo was unavailable.",
+                limitation="Mount-table evidence is required before host filesystem protection can be verified.",
             )
 
         obs = expected
@@ -78,5 +108,9 @@ class HostFilesystemProtectionCheck(BaseIsolationCheck):
             expected=expected,
             observed=obs,
             evidence_ref="probe:host-filesystem",
-            evidence_detail=f"Probed {len(PROHIBITED_HOST_PATHS)} prohibited host paths; all absent or unreadable.",
+            evidence_detail=(
+                f"Inspected /proc/self/mountinfo and probed {len(PROHIBITED_HOST_PATHS)} explicit "
+                "host mount paths; no prohibited host mount was found or readable. Container-owned "
+                "system files were intentionally excluded because they do not prove host exposure."
+            ),
         )

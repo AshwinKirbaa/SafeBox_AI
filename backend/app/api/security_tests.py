@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import hmac
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, HTTPException, Path, Query, Request
 
-from app.database import DuplicateInfraResult
+from app.database import DuplicateInfraResult, REQUIRED_INFRA_CHECKS
 from app.schemas import (
     InfraCheckResult,
     InfraCheckSubmission,
@@ -21,6 +21,7 @@ from app.schemas import (
     utc_now,
 )
 from app.services.runner import RunnerError
+from app.services.activity_logger import log_worker_sandbox_check
 
 logger = logging.getLogger("safebox.api")
 router = APIRouter(prefix="/api/security-tests", tags=["security-tests"])
@@ -66,6 +67,14 @@ def get_run(run_id: RunIdPath, request: Request) -> RunRecord:
     return record
 
 
+@router.get("/runs/{run_id}/audit-events")
+def get_sandbox_audit_events(run_id: RunIdPath, request: Request) -> dict[str, Any]:
+    if request.app.state.db.get_raw(run_id) is None:
+        raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "Run not found."})
+    events = request.app.state.sandbox_audit.read(run_id)
+    return {"run_id": run_id, "events": events, "count": len(events)}
+
+
 def _authorise_worker(request: Request, token: str | None) -> None:
     settings = request.app.state.settings
     expected = settings.worker_token.get_secret_value() if settings.worker_token else ""
@@ -86,8 +95,8 @@ def submit_infrastructure_check(
 ) -> InfraCheckResult:
     """Accept one isolation-check result from the sandbox worker (Member 2).
 
-    The verdict is derived only from what the worker reported: error -> ERROR;
-    COMPLETED -> PASS if observed == expected else FAIL; PENDING / UNAVAILABLE pass through.
+    New workers submit an explicit verdict plus traceable evidence. Legacy workers
+    retain the observed/expected comparison contract. Missing evidence never passes.
     """
     _authorise_worker(request, x_worker_token)
     if body.run_id != run_id:
@@ -103,6 +112,17 @@ def submit_infrastructure_check(
         status = InfraStatus.PENDING
     elif body.reported_state == "UNAVAILABLE":
         status = InfraStatus.UNAVAILABLE
+    elif body.reported_verdict == "ERROR":
+        status = InfraStatus.ERROR
+    elif body.reported_verdict == "FAIL":
+        status = InfraStatus.FAIL
+    elif body.reported_verdict == "PASS":
+        # A claimed PASS without traceable runtime evidence is not verified.
+        status = (
+            InfraStatus.PASS
+            if body.evidence_ref and body.evidence_detail
+            else InfraStatus.UNAVAILABLE
+        )
     else:
         obs = body.observed.strip() if body.observed else ""
         exp = body.expected.strip() if body.expected else ""
@@ -117,7 +137,30 @@ def submit_infrastructure_check(
     except DuplicateInfraResult:
         raise HTTPException(status_code=409, detail={
             "code": "duplicate_check", "message": "A result for this worker/check/run already exists."})
+    try:
+        request.app.state.sandbox_audit.record(
+            run_id, "sandbox_check", worker_execution_id=body.worker_id,
+            check_id=body.check_id, policy_version=body.policy_version,
+            execution_status=body.reported_state.lower(), expected=body.expected,
+            observed=body.observed, evidence_source=body.evidence_ref,
+            evidence_summary=body.evidence_detail, duration_ms=body.duration_ms,
+            verdict=status.value,
+            error_type="check_execution" if body.error else None,
+            error_message=body.error, persistence_status="persisted",
+        )
+    except Exception:
+        db.delete_infra_check(run_id, body.worker_id, body.check_id)
+        raise
     logger.info("infra check stored run_id=%s check=%s status=%s", run_id, body.check_id, status.value)
+    log_worker_sandbox_check(
+        run_id=run_id,
+        check_id=body.check_id,
+        worker_id=body.worker_id,
+        status=status.value,
+        observed=body.observed,
+        expected=body.expected,
+        error=body.error,
+    )
     return result
 
 
@@ -189,9 +232,12 @@ async def launch_worker(
         )
 
     request.app.state.active_infra_verifications.add(run_id)
+    audit = request.app.state.sandbox_audit
     try:
+        audit.record(run_id, "run_initialization", worker_execution_id="worker-1", execution_status="started")
         # Clear any prior infra checks for this run so results can be cleanly re-submitted
         db.clear_infra_checks(run_id)
+        audit.record(run_id, "container_preparation", worker_execution_id="worker-1", execution_status="started")
 
         from typing import Any
         from worker.models import InfraCheckSubmission
@@ -217,14 +263,24 @@ async def launch_worker(
             worker_token=token_str,
             image_tag="safebox-worker:latest",
             submitter=submitter,
+            event_sink=lambda stage, fields: audit.record(run_id, stage, **fields),
         )
 
-        await run_in_threadpool(
+        execution = await run_in_threadpool(
             orchestrator.execute_and_submit,
             run_id,
             "worker-1",
             allow_host_fallback,
         )
+        submissions = execution.get("submissions", [])
+        rejected = [s for s in submissions if s.get("status") != "created"]
+        if rejected:
+            db.clear_infra_checks(run_id)
+            raise RuntimeError(f"{len(rejected)} infrastructure check submission(s) were not persisted")
+        submitted_ids = [s.get("check_id") for s in submissions]
+        if len(submitted_ids) != len(REQUIRED_INFRA_CHECKS) or set(submitted_ids) != set(REQUIRED_INFRA_CHECKS):
+            db.clear_infra_checks(run_id)
+            raise RuntimeError("Worker did not persist exactly the seven required infrastructure checks")
 
         updated = request.app.state.runner.get_run(run_id)
         if updated is None:
@@ -232,10 +288,32 @@ async def launch_worker(
                 status_code=404,
                 detail={"code": "run_not_found", "message": f"Run '{run_id}' not found."},
             )
+        audit.record(
+            run_id, "overall_verdict_aggregation", worker_execution_id="worker-1",
+            execution_status="completed", verdict=updated.infrastructure.status.value,
+            observed={"submitted_checks": len(updated.infrastructure.checks)},
+            evidence_summary=updated.infrastructure.note, persistence_status="persisted",
+        )
+        audit.record(run_id, "container_cleanup", worker_execution_id="worker-1", execution_status="completed")
+        audit.record(run_id, "final_execution_status", worker_execution_id="worker-1", execution_status="completed")
         return updated
-    except HTTPException:
+    except HTTPException as exc:
+        audit.record(
+            run_id, "container_cleanup", worker_execution_id="worker-1", execution_status="completed"
+        )
+        audit.record(
+            run_id, "final_execution_status", worker_execution_id="worker-1",
+            execution_status="failed", verdict="ERROR", error_type="HTTPException",
+            error_message=str(exc.detail), persistence_status="not_applicable",
+        )
         raise
     except Exception as exc:
+        audit.record(run_id, "container_cleanup", worker_execution_id="worker-1", execution_status="completed")
+        audit.record(
+            run_id, "final_execution_status", worker_execution_id="worker-1",
+            execution_status="failed", verdict="ERROR", error_type=type(exc).__name__,
+            error_message=str(exc), persistence_status="not_applicable",
+        )
         logger.exception("Sandbox worker execution failed for %s: %s", run_id, exc)
         raise HTTPException(
             status_code=500,

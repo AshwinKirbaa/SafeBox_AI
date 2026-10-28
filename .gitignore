@@ -9,6 +9,8 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-tmp*/
+.playwright-mcp/
 .mypy_cache/
 .ruff_cache/
 
@@ -18,7 +20,11 @@ __pycache__/
 *.db
 .vault.json
 .vault.json.tmp
+.vault.*
+data/
 backend/data/
+worker/data/
+comparison_results.json
 
 # JavaScript dependencies and build output
 node_modules/
@@ -31,8 +37,8 @@ coverage/
 .DS_Store
 Thumbs.db
 
-.env
-.env.*
-!.env.example
-dist/
-coverage/
+# Media, archives, and outputs
+*.mp4
+*.zip
+*.patch
+outputs/

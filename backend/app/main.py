@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from starlette.exceptions import HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.api.activity import router as activity_router
 from app.api.connections import router as connections_router
 from app.api.security_tests import router as security_router
 from app.config import Settings, get_settings
@@ -18,6 +20,7 @@ from app.services.adapter_registry import SUPPORTED_PROVIDERS_META
 from app.services.evidence import EvidenceService
 from app.services.ollama_adapter import OllamaAdapter
 from app.services.runner import AdapterFactory, SecurityTestRunner
+from app.services.sandbox_audit import SandboxAuditLogger
 from app.services.test_registry import TestRegistry
 
 __version__ = "1.0.0"
@@ -35,9 +38,10 @@ def create_app(settings: Settings | None = None,
                adapter_factory: AdapterFactory | None = None) -> FastAPI:
     settings = settings or get_settings()
     registry = TestRegistry()
-    db = Database(settings.database_path)
+    db = Database(settings.database_path, vault_key=settings.vault_key)
     evidence = EvidenceService(registry.sensitive_values(), settings.evidence_max_excerpt_chars)
     runner = SecurityTestRunner(settings, registry, db, evidence, adapter_factory)
+    sandbox_audit = SandboxAuditLogger(Path(settings.database_path).parent / "audit-logs")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -49,6 +53,7 @@ def create_app(settings: Settings | None = None,
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
     app.state.settings, app.state.registry = settings, registry
     app.state.db, app.state.runner = db, runner
+    app.state.sandbox_audit = sandbox_audit
 
     @app.middleware("http")
     async def limit_request_size(request: Request, call_next):
@@ -98,6 +103,7 @@ def create_app(settings: Settings | None = None,
 
     app.include_router(security_router)
     app.include_router(connections_router)
+    app.include_router(activity_router)
     return app
 
 

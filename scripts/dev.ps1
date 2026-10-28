@@ -104,12 +104,34 @@ if ($fConn) {
 
 # 5. Check Ollama Engine (Optional local inference)
 Write-Host "`n[3/3] Ollama Inference Engine Check..." -ForegroundColor Yellow
+$ollamaRunning = $false
 try {
     $tags = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 2 -ErrorAction Stop
     $modelNames = ($tags.models | ForEach-Object { $_.name }) -join ", "
     Write-Host "[+] Ollama is active on http://127.0.0.1:11434. Models: $modelNames" -ForegroundColor Green
+    $ollamaRunning = $true
 } catch {
-    Write-Host "[!] Ollama is not running on http://127.0.0.1:11434 (start with 'ollama serve' for local models)." -ForegroundColor Gray
+    # Attempt to locate and start local Ollama if installed
+    $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
+    $ollamaExe = if ($ollamaCmd) { $ollamaCmd.Source } else { Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe" }
+    if (Test-Path $ollamaExe) {
+        Write-Host "[*] Ollama executable found at $ollamaExe. Starting local background service ('ollama serve')..." -ForegroundColor Cyan
+        Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Hidden
+        for ($i = 0; $i -lt 8; $i++) {
+            Start-Sleep -Milliseconds 500
+            try {
+                $tags = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 1 -ErrorAction Stop
+                $modelNames = ($tags.models | ForEach-Object { $_.name }) -join ", "
+                Write-Host "[+] Ollama started successfully on http://127.0.0.1:11434. Models: $modelNames" -ForegroundColor Green
+                $ollamaRunning = $true
+                break
+            } catch { }
+        }
+    }
+    if (-not $ollamaRunning) {
+        Write-Host "[!] Ollama is not running on http://127.0.0.1:11434." -ForegroundColor Yellow
+        Write-Host "    Prerequisite: Install Ollama (https://ollama.com) and run 'ollama serve' to enable local LLM evaluations." -ForegroundColor Gray
+    }
 }
 
 # Summary
