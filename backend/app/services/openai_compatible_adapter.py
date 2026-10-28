@@ -265,12 +265,33 @@ class OpenAICompatibleAdapter(ModelAdapter):
             resp = client.get(endpoint, headers=self._get_headers(), timeout=timeout_seconds)
             latency = int((time.perf_counter() - start) * 1000)
 
-            if resp.status_code == 401 or resp.status_code == 403:
+            if resp.status_code in (400, 401, 403):
+                provider_message = ""
+                try:
+                    error_data = resp.json()
+                    raw_error = error_data.get("error", "") if isinstance(error_data, dict) else ""
+                    provider_message = (
+                        raw_error.get("message", "") if isinstance(raw_error, dict) else str(raw_error)
+                    )
+                except Exception:
+                    provider_message = ""
+                lower_message = provider_message.lower()
+                is_auth_error = resp.status_code in (401, 403) or (
+                    "api key" in lower_message
+                    and any(word in lower_message for word in ("incorrect", "invalid", "unauthorized"))
+                )
+                if not is_auth_error:
+                    return ConnectionCheckResult(
+                        reachable=True,
+                        model_available=False,
+                        latency_ms=latency,
+                        error_message=f"Endpoint returned HTTP {resp.status_code}.",
+                    )
                 return ConnectionCheckResult(
                     reachable=True,
                     model_available=False,
                     latency_ms=latency,
-                    error_message=f"Authentication failed (HTTP {resp.status_code}). Verify API key.",
+                    error_message=f"Authentication failed (HTTP {resp.status_code}). Verify the API key belongs to this provider.",
                 )
             if resp.status_code >= 400:
                 return ConnectionCheckResult(

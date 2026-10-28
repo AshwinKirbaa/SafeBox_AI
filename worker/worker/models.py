@@ -15,7 +15,8 @@ class CheckStatus(str, Enum):
     ERROR = "ERROR"
     PENDING = "PENDING"
     UNAVAILABLE = "UNAVAILABLE"
-    INCONCLUSIVE = "INCONCLUSIVE"  # Mapped to UNAVAILABLE or explicit limitation when submitting
+    INCONCLUSIVE = "INCONCLUSIVE"  # Mapped to UNAVAILABLE with [INCONCLUSIVE] limitation
+    UNSUPPORTED = "UNSUPPORTED"    # Mapped to UNAVAILABLE with [UNSUPPORTED] limitation
 
 
 class ReportedState(str, Enum):
@@ -39,9 +40,12 @@ class InfraCheckSubmission(BaseModel):
     policy_id: _Short
     policy_version: _Short
     reported_state: Literal["COMPLETED", "PENDING", "UNAVAILABLE"] = "COMPLETED"
+    reported_verdict: Literal["PASS", "FAIL", "ERROR"] | None = None
     observed: str | None = Field(None, max_length=500)
     expected: str | None = Field(None, max_length=500)
     evidence_ref: str | None = Field(None, max_length=256)
+    evidence_detail: str | None = Field(None, max_length=2000)
+    duration_ms: int | None = Field(None, ge=0)
     timestamp: str = Field(description="ISO 8601 UTC timestamp ending in Z")
     error: str | None = Field(None, max_length=500)
     limitation: str | None = Field(None, max_length=500)
@@ -61,6 +65,10 @@ class InfraCheckSubmission(BaseModel):
                 or not self.expected.strip()
             ):
                 raise ValueError("COMPLETED checks require non-blank 'observed' and 'expected'")
+        if self.reported_verdict == "ERROR" and not (self.error and self.error.strip()):
+            raise ValueError("reported_verdict ERROR requires a non-blank 'error'")
+        if self.reported_state != "COMPLETED" and self.reported_verdict is not None:
+            raise ValueError("reported_verdict is only valid for COMPLETED checks")
         if self.reported_state == "UNAVAILABLE" and not (
             (self.error and self.error.strip()) or (self.limitation and self.limitation.strip())
         ):
@@ -79,6 +87,7 @@ class IsolationCheckResult(BaseModel):
     observed: str
     evidence_ref: str | None = None
     evidence_detail: str | None = None
+    duration_ms: int | None = Field(None, ge=0)
     error: str | None = None
     limitation: str | None = None
     timestamp: str = Field(
@@ -87,7 +96,29 @@ class IsolationCheckResult(BaseModel):
 
     def to_submission(self, worker_id: str, run_id: str) -> InfraCheckSubmission:
         """Convert local check result to Member 1 backend submission payload."""
-        if self.error:
+        if self.status in (CheckStatus.UNAVAILABLE, CheckStatus.INCONCLUSIVE, CheckStatus.UNSUPPORTED):
+            tag = f"[{self.status.value}] " if self.status in (CheckStatus.INCONCLUSIVE, CheckStatus.UNSUPPORTED) else ""
+            lim = self.limitation or (f"{tag}Verdict: {self.observed}" if self.observed else f"{tag}Check unavailable")
+            if tag and not lim.startswith(tag):
+                lim = f"{tag}{lim}"
+            return InfraCheckSubmission(
+                worker_id=worker_id,
+                run_id=run_id,
+                check_id=self.check_id,
+                policy_id=self.policy_id,
+                policy_version=self.policy_version,
+                reported_state="UNAVAILABLE",
+                observed=None,
+                expected=None,
+                evidence_ref=self.evidence_ref[:256] if self.evidence_ref else None,
+                evidence_detail=self.evidence_detail[:2000] if self.evidence_detail else None,
+                duration_ms=self.duration_ms,
+                timestamp=self.timestamp,
+                error=None,
+                limitation=lim[:500],
+            )
+        elif self.status == CheckStatus.ERROR:
+            err = (self.error and self.error.strip()) or (self.observed and self.observed.strip()) or "Check encountered an unhandled error"
             return InfraCheckSubmission(
                 worker_id=worker_id,
                 run_id=run_id,
@@ -95,11 +126,14 @@ class IsolationCheckResult(BaseModel):
                 policy_id=self.policy_id,
                 policy_version=self.policy_version,
                 reported_state="COMPLETED",
+                reported_verdict="ERROR",
                 observed=self.observed[:500] if self.observed else None,
                 expected=self.expected[:500] if self.expected else None,
                 evidence_ref=self.evidence_ref[:256] if self.evidence_ref else None,
+                evidence_detail=self.evidence_detail[:2000] if self.evidence_detail else None,
+                duration_ms=self.duration_ms,
                 timestamp=self.timestamp,
-                error=self.error[:500],
+                error=err[:500],
                 limitation=self.limitation[:500] if self.limitation else None,
             )
         elif self.status == CheckStatus.PENDING:
@@ -113,28 +147,14 @@ class IsolationCheckResult(BaseModel):
                 observed=None,
                 expected=None,
                 evidence_ref=self.evidence_ref[:256] if self.evidence_ref else None,
+                evidence_detail=self.evidence_detail[:2000] if self.evidence_detail else None,
+                duration_ms=self.duration_ms,
                 timestamp=self.timestamp,
                 error=None,
                 limitation=self.limitation[:500] if self.limitation else None,
             )
-        elif self.status in (CheckStatus.UNAVAILABLE, CheckStatus.INCONCLUSIVE):
-            lim = self.limitation or (f"Inconclusive verdict: {self.observed}" if self.status == CheckStatus.INCONCLUSIVE else "Check unavailable")
-            return InfraCheckSubmission(
-                worker_id=worker_id,
-                run_id=run_id,
-                check_id=self.check_id,
-                policy_id=self.policy_id,
-                policy_version=self.policy_version,
-                reported_state="UNAVAILABLE",
-                observed=None,
-                expected=None,
-                evidence_ref=self.evidence_ref[:256] if self.evidence_ref else None,
-                timestamp=self.timestamp,
-                error=None,
-                limitation=lim[:500],
-            )
         elif self.status == CheckStatus.PASS:
-            # Under Member 1 contract: COMPLETED -> PASS if observed == expected
+            # Preserve the actual observation; the explicit verdict carries the decision.
             return InfraCheckSubmission(
                 worker_id=worker_id,
                 run_id=run_id,
@@ -142,15 +162,18 @@ class IsolationCheckResult(BaseModel):
                 policy_id=self.policy_id,
                 policy_version=self.policy_version,
                 reported_state="COMPLETED",
-                observed=self.expected[:500],  # Equal to expected produces PASS
+                reported_verdict="PASS",
+                observed=self.observed[:500],
                 expected=self.expected[:500],
                 evidence_ref=self.evidence_ref[:256] if self.evidence_ref else None,
+                evidence_detail=self.evidence_detail[:2000] if self.evidence_detail else None,
+                duration_ms=self.duration_ms,
                 timestamp=self.timestamp,
                 error=None,
                 limitation=self.limitation[:500] if self.limitation else None,
             )
         else:  # FAIL
-            # Ensure observed != expected so Member 1 derives FAIL
+            # Keep legacy observed/expected mismatch semantics for older backends.
             obs = self.observed if self.observed != self.expected else f"VIOLATION: {self.observed}"
             return InfraCheckSubmission(
                 worker_id=worker_id,
@@ -159,9 +182,12 @@ class IsolationCheckResult(BaseModel):
                 policy_id=self.policy_id,
                 policy_version=self.policy_version,
                 reported_state="COMPLETED",
+                reported_verdict="FAIL",
                 observed=obs[:500],
                 expected=self.expected[:500],
                 evidence_ref=self.evidence_ref[:256] if self.evidence_ref else None,
+                evidence_detail=self.evidence_detail[:2000] if self.evidence_detail else None,
+                duration_ms=self.duration_ms,
                 timestamp=self.timestamp,
                 error=None,
                 limitation=self.limitation[:500] if self.limitation else None,

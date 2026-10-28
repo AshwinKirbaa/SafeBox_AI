@@ -6,8 +6,8 @@ from .base import BaseIsolationCheck
 from ..models import CheckStatus, IsolationCheckResult
 
 
-MAX_PERMITTED_MEMORY_BYTES = 512 * 1024 * 1024  # 512 MiB
-MAX_PERMITTED_PIDS = 256
+MAX_PERMITTED_MEMORY_BYTES = 256 * 1024 * 1024  # Must match docker_runner.py
+MAX_PERMITTED_PIDS = 64
 
 
 class ResourceLimitsCheck(BaseIsolationCheck):
@@ -16,7 +16,7 @@ class ResourceLimitsCheck(BaseIsolationCheck):
     policy_version = "1.0.0"
 
     def run(self, context: dict[str, Any]) -> IsolationCheckResult:
-        expected = "memory and pid limits enforced (memory <= 512MiB, pids <= 256)"
+        expected = "memory and pid limits enforced (memory <= 256MiB, pids <= 64)"
         cgroup_root = Path(context.get("cgroup_root", "/sys/fs/cgroup"))
 
         if not cgroup_root.exists():

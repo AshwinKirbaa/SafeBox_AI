@@ -184,6 +184,41 @@ None to the agreed endpoint set. Additions beyond the original brief: the infras
 
 ---
 
+## Member 2 Recovery & Workspace Isolation Integration
+
+### 1. Canonical Implementation & Module Hierarchy
+- **Canonical Orchestrator**: `worker/worker/orchestrator/docker_runner.py` is the single source of truth for host orchestration (`DockerSandboxOrchestrator`).
+- **Duplicate Removal**: Broken duplicate files in `worker/orchestrator/` (which crashed on relative `..models` imports) were traced and removed.
+- **Import Contract**: All consumers (`backend`, `tests`, `run_worker.ps1`) import via `from worker.orchestrator.docker_runner import DockerSandboxOrchestrator` with `worker` on `sys.path`.
+
+### 2. Strict Input Validation & Traversal Defense
+- **Run ID Strict Regex**: Validated against `^run_[0-9a-f]{16,32}$` across `prepare_workspaces`, `cleanup_workspaces`, `build_docker_run_args`, and `run_in_docker`. Path traversals (`../..`, absolute paths) are rejected before any filesystem interaction.
+- **Path Resolution**: Workspaces are resolved and strictly confirmed to be children of `workspaces_base_dir`.
+
+### 3. Dual Host-Container Verification & Reconciliation
+- **Host Mount Inspection (`verify_host_mount_isolation`)**:
+  - Verifies current run workspace and adjacent workspace exist and are distinct directories.
+  - Verifies `protected_secret.txt` sentinel exists exclusively in adjacent workspace.
+  - Inspects container CLI args to guarantee exactly one bind mount (`/workspace:rw`).
+  - Verifies adjacent workspace is never mounted.
+- **Strict Reconciliation Rule**:
+  - The host may **only confirm or downgrade** a verdict, never upgrade it.
+  - Container `FAIL` or `ERROR` is preserved as `FAIL` or `ERROR`.
+  - Container `INCONCLUSIVE` remains `INCONCLUSIVE`.
+  - Container `PASS` is confirmed as `PASS` only if host mount verification succeeds; otherwise downgraded to `INCONCLUSIVE`.
+
+### 4. Symlink Protection & Guaranteed Cleanup
+- **No-Follow File Creation**: Sentinel files and probe markers use exclusive, no-follow creation flags (`O_CREAT | O_EXCL` and `O_NOFOLLOW`).
+- **Safe Directory Cleanup**: `cleanup_workspaces` traverses directories with `followlinks=False` to prevent symlink traversal during cleanup.
+- **Container Cleanup**: On execution failure or timeout, running containers (`safebox-worker-*`) are forcefully removed via `docker rm -f`.
+
+### 5. Status-First Mapping (`to_submission`)
+- `INCONCLUSIVE` → `reported_state="UNAVAILABLE"`, `limitation="[INCONCLUSIVE] ..."`
+- `UNSUPPORTED` → `reported_state="UNAVAILABLE"`, `limitation="[UNSUPPORTED] ..."`
+- `ERROR` → `reported_state="COMPLETED"`, `error` non-blank error message.
+- `PASS` → `reported_state="COMPLETED"`, `observed == expected`.
+- `FAIL` → `reported_state="COMPLETED"`, `observed != expected`.
+
 ## Windows PowerShell Developer & Integration Workflow
 
 ### 1. Worker Token Setup & Management

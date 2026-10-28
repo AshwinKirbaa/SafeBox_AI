@@ -124,18 +124,20 @@ docker run --rm `
 
 ## 4. Running the Tests
 
-The test suite validates check logic, container argument construction, status derivation, and end-to-end API submission:
+The test suite validates check logic, container argument construction, status derivation, host mount isolation verification, output integrity validation, and end-to-end API submission:
 
 ```powershell
 cd "d:\Projects\SafeBox ai"
 .\safebox-ai\backend\.venv\Scripts\python.exe -m pytest -v safebox-ai\worker\tests
 ```
 
-77 isolation tests pass (39 unit/contract + 38 automated negative), covering:
-- Unit tests for all checks under PASS, FAIL, ERROR, UNAVAILABLE, and INCONCLUSIVE conditions
-- Mocking network interfaces and raw socket errors (`ENETUNREACH`, `EADDRNOTAVAIL`, `ETIMEDOUT`)
-- End-to-end integration tests submitting to Member 1's backend API and validating HTTP 201, 401, 409, and 422 contracts.
-- Automated negative tests (`test_isolation_negative.py`) verifying every check rejects its corresponding unsafe condition via both mock fixtures and live disposable Docker containers.
+**89 tests total across 6 test modules** (82 unit/simulated passed, 7 live container tests skipped when Docker daemon is stopped):
+- **`test_checks.py`** (19 tests): Unit tests for all 7 checks under PASS, FAIL, ERROR, UNAVAILABLE, and INCONCLUSIVE conditions; includes symlink-resistant probe verification and empty adjacent directory reachability detection.
+- **`test_orchestrator.py`** (22 tests): Strict run ID format validation, workspace directory traversal guards, safe non-following workspace/sentinel cleanup, host mount isolation inspection (`verify_host_mount_isolation`), dual verification reconciliation (host never upgrades container INCONCLUSIVE/FAIL), container output validation (wrong run ID, duplicate check IDs, missing checks), and container cleanup on timeout.
+- **`test_isolation_negative.py`** (38 tests: 31 simulated negative tests + 7 disposable container tests): Verifies every check rejects its corresponding unsafe condition across process credentials, capabilities, cgroups, mounts, sockets, and network egress.
+- **`test_evidence_integrity.py`** (6 tests): Non-blank validation, status-first submission mapping (`to_submission`), and multi-worker conflict handling.
+- **`test_host_fallback_labeling.py`** (2 tests): Verifies host fallback never fabricates container pass verdicts and labels results accurately.
+- **`test_submitter_and_api.py`** (2 tests): Live HTTP contract verification against Member 1 backend API, including HTTP 201 created and HTTP 401 unauthorized handling.
 
 ---
 

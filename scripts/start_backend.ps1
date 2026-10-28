@@ -63,7 +63,7 @@ Write-Host "[*] Starting SafeBox AI FastAPI backend on http://${BindHost}:${Port
 
 if ($Background) {
     $proc = Start-Process -FilePath $pythonExe `
-        -ArgumentList "-m uvicorn app.main:app --host $BindHost --port $Port" `
+        -ArgumentList "-m uvicorn app.main:app --host $BindHost --port $Port --reload" `
         -WorkingDirectory (Resolve-Path $backendDir).Path `
         -WindowStyle Hidden `
         -PassThru
@@ -87,6 +87,10 @@ if ($Background) {
         Write-Host "    Liveness URL:  http://127.0.0.1:$Port/api/health" -ForegroundColor Cyan
         Write-Host "    Target Mode:   $($health.target_mode)" -ForegroundColor Cyan
         Write-Host "    Database:      OK ($($health.database_ok))" -ForegroundColor Cyan
+        if ($health.ollama) {
+            $olReachable = if ($health.ollama.reachable) { "Active ($($health.ollama.configured_model))" } else { "Offline (start 'ollama serve' for local models)" }
+            Write-Host "    Ollama:        $olReachable" -ForegroundColor Cyan
+        }
         exit 0
     } else {
         Write-Error "Backend failed to respond to /api/health within 10 seconds."
@@ -95,7 +99,7 @@ if ($Background) {
 } else {
     Push-Location $backendDir
     try {
-        & $pythonExe -m uvicorn app.main:app --host $BindHost --port $Port
+        & $pythonExe -m uvicorn app.main:app --host $BindHost --port $Port --reload
     } finally {
         Pop-Location
     }

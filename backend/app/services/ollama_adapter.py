@@ -67,8 +67,55 @@ class OllamaAdapter(ModelAdapter):
             return self._client, False
         return httpx.Client(timeout=self.timeout_seconds, follow_redirects=False), True
 
+    @staticmethod
+    def _local_model_names(data: object) -> set[str]:
+        """Return models backed by local weights, excluding Ollama cloud entries."""
+        if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+            raise TargetResponseError("Ollama returned a malformed model inventory.")
+        return {
+            item["name"]
+            for item in data["models"]
+            if isinstance(item, dict)
+            and isinstance(item.get("name"), str)
+            and item["name"]
+            and not item.get("remote_model")
+            and not item.get("remote_host")
+        }
+
+    def _require_local_model(self) -> None:
+        """Verify the requested model is installed before sending the test prompt."""
+        client, owned = self._http()
+        try:
+            resp = client.get(f"{self.base_url}/api/tags", timeout=min(self.timeout_seconds, 5.0))
+            if resp.status_code >= 400:
+                raise TargetHTTPError(f"Ollama model inventory returned HTTP {resp.status_code}.")
+            names = self._local_model_names(resp.json())
+            wanted = {self.model, self.model if ":" in self.model else f"{self.model}:latest"}
+            if not names.intersection(wanted):
+                available = ", ".join(sorted(names)[:10]) or "none"
+                raise TargetModelNotFoundError(
+                    f"Ollama model '{self.model}' is not installed locally. "
+                    f"Installed local models: {available}. Install it manually with "
+                    f"'ollama pull {self.model}' (SafeBox never downloads models automatically)."
+                )
+        except TargetError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise TargetTimeout("Ollama model inventory request timed out.") from exc
+        except httpx.TransportError as exc:
+            raise TargetConnectionError(
+                f"Could not connect to the Ollama service at {self.base_url}. "
+                "Ensure Ollama is running (e.g. 'ollama serve' or open the Ollama app)."
+            ) from exc
+        except (ValueError, TypeError) as exc:
+            raise TargetResponseError("Ollama returned a malformed model inventory.") from exc
+        finally:
+            if owned:
+                client.close()
+
     def generate(self, request: TargetRequest) -> TargetResponse:
         self.validate_capabilities(request)
+        self._require_local_model()
         payload: dict = {
             "model": self.model,
             "system": request.system_prompt,
@@ -82,35 +129,45 @@ class OllamaAdapter(ModelAdapter):
             payload["format"] = "json"
 
         start = time.perf_counter()
-        client, owned = self._http()
         body = bytearray()
-        try:
-            with client.stream("POST", f"{self.base_url}/api/generate", json=payload,
-                               timeout=self.timeout_seconds) as resp:
-                if resp.status_code == 404:
-                    raise TargetModelNotFoundError(
-                        f"Ollama returned HTTP 404. Ollama model '{self.model}' was not found on {self.base_url}. "
-                        f"The model may not be installed; install it manually (e.g. 'ollama pull {self.model}') "
-                        f"(SafeBox never downloads models)."
-                    )
-                if resp.status_code >= 400:
-                    raise TargetHTTPError(f"Ollama returned HTTP {resp.status_code}.")
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            body.clear()
+            client, owned = self._http()
+            try:
+                with client.stream("POST", f"{self.base_url}/api/generate", json=payload,
+                                   timeout=self.timeout_seconds) as resp:
+                    if resp.status_code == 404:
+                        raise TargetModelNotFoundError(
+                            f"Ollama returned HTTP 404. Ollama model '{self.model}' was not found on {self.base_url}. "
+                            f"The model may not be installed; install it manually (e.g. 'ollama pull {self.model}') "
+                            f"(SafeBox never downloads models)."
+                        )
+                    if resp.status_code >= 400:
+                        raise TargetHTTPError(f"Ollama returned HTTP {resp.status_code}.")
 
-                for chunk in resp.iter_bytes():
-                    body.extend(chunk)
-                    if len(body) > self.max_http_bytes:
-                        raise TargetResponseError("Ollama response exceeded the size limit.")
-                    if time.perf_counter() - start > self.timeout_seconds:
-                        raise TargetTimeout("Ollama inference exceeded the timeout.")
-        except TargetError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise TargetTimeout("Ollama request timed out.") from exc
-        except httpx.TransportError as exc:
-            raise TargetConnectionError("Could not connect to the Ollama service.") from exc
-        finally:
-            if owned:
-                client.close()
+                    for chunk in resp.iter_bytes():
+                        body.extend(chunk)
+                        if len(body) > self.max_http_bytes:
+                            raise TargetResponseError("Ollama response exceeded the size limit.")
+                        if time.perf_counter() - start > self.timeout_seconds:
+                            raise TargetTimeout("Ollama inference exceeded the timeout.")
+                break
+            except TargetError:
+                raise
+            except httpx.TimeoutException as exc:
+                raise TargetTimeout("Ollama request timed out.") from exc
+            except httpx.TransportError as exc:
+                if attempt < max_attempts - 1 and (time.perf_counter() - start) < (self.timeout_seconds - 2.0):
+                    time.sleep(0.5)
+                    continue
+                raise TargetConnectionError(
+                    f"Could not connect to the Ollama service at {self.base_url}. "
+                    "Ensure Ollama is running (e.g. 'ollama serve' or open the Ollama app)."
+                ) from exc
+            finally:
+                if owned:
+                    client.close()
 
         try:
             data = json.loads(bytes(body))
@@ -150,7 +207,7 @@ class OllamaAdapter(ModelAdapter):
         try:
             resp = client.get(f"{self.base_url}/api/tags", timeout=timeout_seconds)
             resp.raise_for_status()
-            names = {m.get("name") for m in resp.json().get("models", []) if isinstance(m, dict)}
+            names = self._local_model_names(resp.json())
             wanted = {self.model, self.model if ":" in self.model else f"{self.model}:latest"}
             return True, bool(names & wanted)
         except (httpx.HTTPError, ValueError, AttributeError):
@@ -165,8 +222,7 @@ class OllamaAdapter(ModelAdapter):
         try:
             resp = client.get(f"{self.base_url}/api/tags", timeout=timeout_seconds)
             resp.raise_for_status()
-            models_list = resp.json().get("models", [])
-            return [m.get("name") for m in models_list if isinstance(m, dict) and m.get("name")]
+            return sorted(self._local_model_names(resp.json()))
         except Exception:
             return []
         finally:
@@ -179,7 +235,7 @@ class OllamaAdapter(ModelAdapter):
         try:
             resp = client.get(f"{self.base_url}/api/tags", timeout=timeout_seconds)
             resp.raise_for_status()
-            models = [m.get("name") for m in resp.json().get("models", []) if isinstance(m, dict) and m.get("name")]
+            models = sorted(self._local_model_names(resp.json()))
             wanted = {self.model, self.model if ":" in self.model else f"{self.model}:latest"}
             available = bool(set(models) & wanted) if self.model else True
             latency = int((time.perf_counter() - start) * 1000)
@@ -193,7 +249,7 @@ class OllamaAdapter(ModelAdapter):
         except httpx.ConnectError:
             return ConnectionCheckResult(
                 reachable=False,
-                error_message=f"Could not connect to Ollama service at {self.base_url}.",
+                error_message=f"Could not connect to Ollama service at {self.base_url}. Ensure Ollama is running ('ollama serve' or open the Ollama app).",
             )
         except httpx.TimeoutException:
             return ConnectionCheckResult(

@@ -25,6 +25,7 @@ SECRET_PATTERNS = [
     re.compile(r"(sk-[A-Za-z0-9_\-]{20,})", re.IGNORECASE),
     re.compile(r"(x-api-key[\"'\s:=]+)[A-Za-z0-9_\-\.]{8,}", re.IGNORECASE),
 ]
+GOOGLE_KEY_PATTERN = re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}\b")
 
 
 def is_ip_disallowed(
@@ -119,9 +120,13 @@ def validate_endpoint_url(
     return True, None
 
 
-def sanitize_secrets_from_text(text: str) -> str:
+def sanitize_secrets_from_text(text: str, *additional_secrets: str | None) -> str:
     """Mask any API keys or tokens from raw error or debug messages."""
     result = text
+    for secret in additional_secrets:
+        if secret and len(secret) >= 6:
+            result = result.replace(secret, "[REDACTED_SECRET]")
     for pat in SECRET_PATTERNS:
         result = pat.sub(r"\1[REDACTED_SECRET]", result)
+    result = GOOGLE_KEY_PATTERN.sub("[REDACTED_SECRET]", result)
     return result

@@ -13,10 +13,15 @@ RUN groupadd -g 10001 safebox && \
     useradd -u 10001 -g 10001 -M -s /usr/sbin/nologin safebox
 
 # Create app and workspace directories with strict permissions
-RUN mkdir -p /app /workspace /workspaces && \
+# /workspaces/isolated_canary is a synthetic DAC fixture owned by root:root (0700)
+# to verify in-container discretionary access control denial for unprivileged worker (10001)
+RUN mkdir -p /app /workspace /workspaces/isolated_canary && \
     chown -R safebox:safebox /app /workspace /workspaces && \
+    chown -R root:root /workspaces/isolated_canary && \
     chmod 750 /app && \
-    chmod 700 /workspace /workspaces
+    chmod 755 /workspaces && \
+    chmod 700 /workspace && \
+    chmod 700 /workspaces/isolated_canary
 
 WORKDIR /app
 
@@ -30,7 +35,9 @@ COPY worker /app/worker
 # Set permissions
 RUN chown -R root:root /app && \
     chmod -R 555 /app && \
-    chmod -R 777 /workspace
+    chmod -R 777 /workspace && \
+    chown -R root:root /workspaces/isolated_canary && \
+    chmod 700 /workspaces/isolated_canary
 
 # Run as non-root unprivileged user
 USER 10001:10001

@@ -40,11 +40,16 @@ class Settings(BaseSettings):
     allow_ollama_target: bool = False
 
     inference_timeout_seconds: float = Field(30.0, gt=0, le=300)
+    # Cloud inference commonly includes provider queueing and cold-start time.  Keep
+    # the shorter local deadline above, but do not fail a healthy remote model after
+    # only 30 seconds.
+    remote_inference_timeout_seconds: float = Field(600.0, gt=0, le=1200)
+    contract_probe_timeout_seconds: float = Field(120.0, gt=0, le=1200)
     max_prompt_length: int = Field(4000, ge=100, le=100_000)
     max_response_chars: int = Field(4000, ge=100, le=100_000)
     max_request_bytes: int = Field(16_384, ge=256, le=1_048_576)
     max_concurrent_runs: int = Field(2, ge=1, le=16)
-    max_run_seconds: float = Field(120.0, gt=0, le=3600)
+    max_run_seconds: float = Field(660.0, gt=0, le=3600)
 
     database_path: str = "data/safebox.sqlite3"
     evidence_max_excerpt_chars: int = Field(500, ge=50, le=10_000)
@@ -55,6 +60,7 @@ class Settings(BaseSettings):
     allow_non_loopback: bool = False
 
     worker_token: SecretStr | None = None
+    vault_key: SecretStr | None = None
 
     @model_validator(mode="after")
     def _validate_network_safety(self) -> "Settings":

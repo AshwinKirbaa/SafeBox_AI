@@ -2,7 +2,7 @@
 
 SafeBox AI is a model-agnostic AI security testing platform with standardized adversarial evaluation, sanitized evidence pipelines, SQLite run history, and Docker infrastructure isolation verification.
 
-It supports **universal inference targets across 3 tiers** (Ollama, OpenAI-Compatible, Generic HTTP JSON, Mock Simulator, OpenAI, Anthropic Claude, Google Gemini, Hugging Face, vLLM, llama.cpp, and local Transformers).
+It supports **universal inference targets across 3 tiers** (Ollama, OpenAI-Compatible, Generic HTTP JSON, Mock Simulator, OpenAI, Anthropic Claude, Google Gemini, Hugging Face, vLLM, llama.cpp, and local Transformers), with type-aware verification for chat, vision, embeddings, image generation, speech, classification, regression, reranking, and custom JSON contracts.
 
 See [UNIVERSAL_MODELS.md](UNIVERSAL_MODELS.md) for complete architecture, provider matrix, SSRF protection, and connection API reference.
 Sandbox isolation (Member 2) and the dashboard (Member 3) integrate through [INTEGRATION.md](INTEGRATION.md).
@@ -16,28 +16,21 @@ backend/app/
   api/security_tests.py  endpoints
   services/            model_adapter, mock_adapter, ollama_adapter, test_registry,
                        evaluator, runner, evidence
-backend/tests/         pytest suite (no Docker / Ollama needed)
 worker/                Member 2 sandbox worker container and isolation checks
   Dockerfile           Hardened non-root Linux container specification
   worker/              Isolation checks (docker socket, caps, cgroups, network)
   orchestrator/        Host-side runner and workspace manager
-  tests/               Pytest isolation and contract test suite
   run_worker.ps1       PowerShell runner script
+frontend/              SafeBox AI interactive dashboard and security suite UI
 ```
 
 ## Setup (Windows PowerShell)
 
 ```powershell
-cd safebox-ai\backend
+cd backend
 py -3.12 -m venv .venv            # or: python -m venv .venv
 .\.venv\Scripts\Activate.ps1      # if blocked: Set-ExecutionPolicy -Scope Process Bypass
 python -m pip install -r requirements.txt
-```
-
-## Run the tests
-
-```powershell
-python -m pytest -q
 ```
 
 ## Start the API (loopback only, mock mode by default)
@@ -79,7 +72,7 @@ $body = @{ test_id = "repeatability"; target = @{ mode = "mock"; mock_behavior =
 Run from `safebox-ai\worker`:
 
 ```powershell
-# Run the 23 isolation and contract tests:
+# Run the 94 isolation and contract tests:
 ..\backend\.venv\Scripts\python.exe -m pytest -v tests
 
 # Execute worker checks and submit to Member 1 backend:
@@ -125,7 +118,9 @@ Back to mock: `Remove-Item Env:SAFEBOX_TARGET_MODE, Env:SAFEBOX_OLLAMA_MODEL` an
 - **Statuses**: PASS / FAIL / ERROR / INCONCLUSIVE. Truncated output can only yield FAIL or INCONCLUSIVE.
 - **Concurrency**: runs execute synchronously inside the request thread (FastAPI threadpool). At most
   `SAFEBOX_MAX_CONCURRENT_RUNS` run at once (others get 429); a repeatability run of N executions takes up to
-  N × `SAFEBOX_INFERENCE_TIMEOUT_SECONDS` (bounded by `SAFEBOX_MAX_RUN_SECONDS`, default 120 s).
+  N × the applicable inference timeout (30 s local, up to 600 s remote by default), bounded by
+  `SAFEBOX_MAX_RUN_SECONDS` (default 660 s). Override cloud inference with
+  `SAFEBOX_REMOTE_INFERENCE_TIMEOUT_SECONDS`.
 - **Prompts are registry-controlled.** Clients cannot supply prompts, URLs, commands or paths;
   `SAFEBOX_MAX_PROMPT_LENGTH` is a guard on registry prompts.
 - **Retention**: runs older than `SAFEBOX_EVIDENCE_RETENTION_DAYS` (default 30; 0 = keep) are purged at startup.

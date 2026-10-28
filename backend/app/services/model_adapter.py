@@ -94,9 +94,10 @@ class TargetError(Exception):
 
     kind = "error"
 
-    def __init__(self, public_message: str) -> None:
+    def __init__(self, public_message: str, status_code: int | None = None) -> None:
         super().__init__(public_message)
         self.public_message = public_message  # safe to store / show; no prompts or secrets
+        self.status_code = status_code
 
 
 class TargetTimeout(TargetError):
@@ -119,7 +120,11 @@ class TargetModelNotFoundError(TargetHTTPError):
     kind = "model_not_found"
 
 
-class TargetRateLimitError(TargetError):
+class TargetServerOverloadError(TargetHTTPError):
+    kind = "server_overload"
+
+
+class TargetRateLimitError(TargetHTTPError):
     kind = "rate_limit"
 
 
