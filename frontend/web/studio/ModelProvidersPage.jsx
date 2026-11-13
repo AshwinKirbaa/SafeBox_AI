@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Icon, Emblem } from './Effects';
 import { buildConnectionPayload } from './connection-payload';
 
@@ -23,13 +23,23 @@ export function ModelProvidersPage({
   const [formFeedback, setFormFeedback] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
 
-  // When changing provider, default baseUrl if empty
+  // Providers are loaded asynchronously, so seed the selected provider's URL
+  // once its metadata becomes available.
+  useEffect(() => {
+    const meta = providers.find(p => p.id === provider);
+    setBaseUrl(current => current || meta?.default_base_url || '');
+  }, [provider, providers]);
+
+  // Follow provider defaults, but do not overwrite a custom endpoint.
   function handleProviderChange(newProviderId) {
+    const previousMeta = providers.find(p => p.id === provider);
+    const nextMeta = providers.find(p => p.id === newProviderId);
     setProvider(newProviderId);
-    const meta = providers.find(p => p.id === newProviderId);
-    if (meta && meta.default_base_url && !baseUrl) {
-      setBaseUrl(meta.default_base_url);
-    }
+    setBaseUrl(current => (
+      !current || current === previousMeta?.default_base_url
+        ? nextMeta?.default_base_url || ''
+        : current
+    ));
   }
 
   function handleEditClick(c) {
