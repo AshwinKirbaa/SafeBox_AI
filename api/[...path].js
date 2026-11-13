@@ -2,18 +2,11 @@ const BACKEND_ORIGIN = 'https://safebox-ai-api.onrender.com';
 
 export default async function handler(request, response) {
   const token = process.env.SAFEBOX_RENDER_API_TOKEN;
-  const accessKey = process.env.SAFEBOX_APP_ACCESS_KEY;
-  if (!token || !accessKey) {
+  if (!token) {
     return response.status(503).json({
       error: { code: 'proxy_not_configured', message: 'Backend proxy credentials are not configured.' },
     });
   }
-  if (request.headers['x-safebox-access-key'] !== accessKey) {
-    return response.status(401).json({
-      error: { code: 'unauthorized', message: 'A valid SafeBox access key is required.' },
-    });
-  }
-
   const incoming = new URL(request.url, 'https://safebox-ai.vercel.app');
   const target = new URL(incoming.pathname + incoming.search, BACKEND_ORIGIN);
   const headers = {
