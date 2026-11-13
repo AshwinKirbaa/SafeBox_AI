@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(8000, ge=1, le=65535)
     allow_non_loopback: bool = False
+    cors_origins: str = ""
 
     worker_token: SecretStr | None = None
     vault_key: SecretStr | None = None
