@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from fastapi import FastAPI, Request
 from starlette.exceptions import HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.activity import router as activity_router
 from app.api.connections import router as connections_router
@@ -51,9 +53,31 @@ def create_app(settings: Settings | None = None,
         yield
 
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
+    cors_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["Content-Type", "Accept", "Authorization", "X-Worker-Token"],
+        )
     app.state.settings, app.state.registry = settings, registry
     app.state.db, app.state.runner = db, runner
     app.state.sandbox_audit = sandbox_audit
+
+    @app.middleware("http")
+    async def require_api_token(request: Request, call_next):
+        if request.method == "OPTIONS" or request.url.path == "/api/health":
+            return await call_next(request)
+        expected = settings.api_token.get_secret_value() if settings.api_token else ""
+        supplied = request.headers.get("authorization", "")
+        if settings.environment == "production" and (
+            not expected or not supplied.startswith("Bearer ")
+            or not secrets.compare_digest(supplied[7:], expected)
+        ):
+            return _error(401, "unauthorized", "A valid bearer token is required.")
+        return await call_next(request)
 
     @app.middleware("http")
     async def limit_request_size(request: Request, call_next):

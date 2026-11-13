@@ -4,7 +4,8 @@ export function createApi(base=configured,fetcher=globalThis.fetch){
  base=base.replace(/\/$/,'');
  async function request(path,{method='GET',body,timeout=30000,signal}={}){
   const controller=new AbortController();const abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,timeout);
-  try{const r=await fetcher(base+path,{method,headers:body===undefined?{Accept:'application/json'}:{Accept:'application/json','Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal,credentials:'same-origin'});if(r.status===204)return null;let data;try{data=await r.json()}catch{throw new ApiError('The backend did not return JSON. Check the /api proxy or VITE_SAFEBOX_API_BASE.',r.status,'invalid_response')}
+  const headers=body===undefined?{Accept:'application/json'}:{Accept:'application/json','Content-Type':'application/json'};
+  try{const r=await fetcher(base+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal,credentials:'same-origin'});if(r.status===204)return null;let data;try{data=await r.json()}catch{throw new ApiError('The backend did not return JSON. Check the /api proxy or VITE_SAFEBOX_API_BASE.',r.status,'invalid_response')}
    if(!r.ok){const e=data.error||data.detail||{};const validation=Array.isArray(e)?e.map(item=>`${(item.loc||[]).slice(1).join('.')||'request'}: ${item.msg||'invalid value'}`).join('; '):'';throw new ApiError(e.message||validation||'Backend request failed.',r.status,e.code||'request_failed')}return data;
   }catch(e){if(e.name==='AbortError')throw new ApiError('Request timed out or was cancelled. A submitted test may still be running; refresh Run Explorer before retrying.',0,'timeout');throw e}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort)}
  }

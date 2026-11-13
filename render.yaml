@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: safebox-ai-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: SAFEBOX_ENVIRONMENT
+        value: production
+      - key: SAFEBOX_TARGET_MODE
+        value: mock
+      - key: SAFEBOX_HOST
+        value: 0.0.0.0
+      - key: SAFEBOX_ALLOW_NON_LOOPBACK
+        value: "true"
+      - key: SAFEBOX_API_TOKEN
+        generateValue: true
+      - key: SAFEBOX_API_TOKEN
+        generateValue: true
+      - key: SAFEBOX_DATABASE_PATH
+        value: /tmp/safebox.sqlite3
+      - key: SAFEBOX_CORS_ORIGINS
+        value: https://safebox-ai.vercel.app
+      - key: SAFEBOX_MAX_CONCURRENT_RUNS
+        value: "2"
