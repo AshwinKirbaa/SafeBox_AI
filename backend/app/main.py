@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -59,11 +60,24 @@ def create_app(settings: Settings | None = None,
             allow_origins=cors_origins,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=["Content-Type", "Accept", "X-Worker-Token"],
+            allow_headers=["Content-Type", "Accept", "Authorization", "X-Worker-Token"],
         )
     app.state.settings, app.state.registry = settings, registry
     app.state.db, app.state.runner = db, runner
     app.state.sandbox_audit = sandbox_audit
+
+    @app.middleware("http")
+    async def require_api_token(request: Request, call_next):
+        if request.method == "OPTIONS" or request.url.path == "/api/health":
+            return await call_next(request)
+        expected = settings.api_token.get_secret_value() if settings.api_token else ""
+        supplied = request.headers.get("authorization", "")
+        if settings.environment == "production" and (
+            not expected or not supplied.startswith("Bearer ")
+            or not secrets.compare_digest(supplied[7:], expected)
+        ):
+            return _error(401, "unauthorized", "A valid bearer token is required.")
+        return await call_next(request)
 
     @app.middleware("http")
     async def limit_request_size(request: Request, call_next):

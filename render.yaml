@@ -16,6 +16,10 @@ services:
         value: 0.0.0.0
       - key: SAFEBOX_ALLOW_NON_LOOPBACK
         value: "true"
+      - key: SAFEBOX_API_TOKEN
+        generateValue: true
+      - key: SAFEBOX_API_TOKEN
+        generateValue: true
       - key: SAFEBOX_DATABASE_PATH
         value: /tmp/safebox.sqlite3
       - key: SAFEBOX_CORS_ORIGINS

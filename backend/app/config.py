@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     cors_origins: str = ""
 
     worker_token: SecretStr | None = None
+    api_token: SecretStr | None = None
     vault_key: SecretStr | None = None
 
     @model_validator(mode="after")
