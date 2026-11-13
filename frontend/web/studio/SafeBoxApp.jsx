@@ -38,6 +38,9 @@ function getRouteRunId() {
 }
 
 export function SafeBoxApp() {
+  const [accessKey, setAccessKey] = useState(() => sessionStorage.getItem('safebox_access_key') || '');
+  const [accessDraft, setAccessDraft] = useState('');
+  const [accessError, setAccessError] = useState('');
   const [currentPage, setCurrentPage] = useState(getRoute);
   const [activeRunId, setActiveRunId] = useState(getRouteRunId);
   const [activeRun, setActiveRun] = useState(null);
@@ -180,6 +183,7 @@ export function SafeBoxApp() {
 
   // Initial load
   useEffect(() => {
+    if (!accessKey) return;
     performAction('Connecting to SafeBox Backend', async () => {
       await loadInitialData();
       await loadRuns(0);
@@ -188,7 +192,7 @@ export function SafeBoxApp() {
         await openRunDetails(initialRunId);
       }
     });
-  }, []);
+  }, [accessKey]);
 
   // Sync runs when viewing runs or overview
   useEffect(() => {
@@ -340,6 +344,32 @@ export function SafeBoxApp() {
   const totalDiscoveredModelCount = Object.values(discovery).reduce((acc, models) => {
     return acc + (models ? models.length : 0);
   }, 0);
+
+  async function unlock(event) {
+    event.preventDefault();
+    setAccessError('');
+    sessionStorage.setItem('safebox_access_key', accessDraft);
+    try {
+      await api.health();
+      setAccessKey(accessDraft);
+      setAccessDraft('');
+    } catch (error) {
+      sessionStorage.removeItem('safebox_access_key');
+      setAccessError(error.message || 'Access denied.');
+    }
+  }
+
+  if (!accessKey) {
+    return <main className="access-gate"><form className="access-card" onSubmit={unlock}>
+      <Emblem /><span className="eyebrow">SAFEBOX AI / RESTRICTED WORKSPACE</span>
+      <h1>Enter access key.</h1>
+      <p>The public interface is protected. Your key stays in this browser tab and is never stored by the frontend.</p>
+      <label htmlFor="access-key">Access key</label>
+      <input id="access-key" type="password" autoComplete="off" value={accessDraft} onChange={event => setAccessDraft(event.target.value)} required />
+      {accessError && <p className="access-error" role="alert">{accessError}</p>}
+      <button type="submit">OPEN SAFEBOX AI</button>
+    </form></main>;
+  }
 
   return (
     <div className="safebox-app-root">
