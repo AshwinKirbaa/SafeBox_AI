@@ -3,5 +3,5 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "installCommand": "cd frontend && npm install --legacy-peer-deps"
+  "installCommand": "cd frontend && npm ci --legacy-peer-deps"
 }
