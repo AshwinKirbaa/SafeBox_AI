@@ -2150,3 +2150,4 @@ p{font-size:16px}
   }
 }
 
+.access-gate{min-height:100vh;display:grid;place-items:center;padding:24px;background:#070714;color:#eeeaf8}.access-card{width:min(520px,100%);display:grid;gap:18px;padding:42px;border:1px solid #4a4264;background:#0d0d20;box-shadow:0 24px 80px #0008}.access-card svg{width:44px}.access-card h1{font-size:clamp(2rem,6vw,4rem);margin:0}.access-card p{color:#aaa4ba;line-height:1.6}.access-card label,.access-card .eyebrow{font:12px monospace;letter-spacing:.16em}.access-card input{padding:16px;border:1px solid #655a83;background:#09091a;color:white;font-size:16px}.access-card button{padding:16px;border:0;background:#a58bd2;color:#0a0812;font-weight:700;letter-spacing:.12em}.access-card .access-error{color:#ffad7c;margin:0}
