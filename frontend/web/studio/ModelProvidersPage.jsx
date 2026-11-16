@@ -2,6 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { Icon, Emblem } from './Effects';
 import { buildConnectionPayload } from './connection-payload';
 
+const FALLBACK_PROVIDERS = [
+  { id: 'ollama', name: 'Ollama', is_remote: false, default_base_url: 'http://127.0.0.1:11434' },
+  { id: 'openai', name: 'OpenAI', is_remote: true, default_base_url: 'https://api.openai.com/v1' },
+  { id: 'anthropic', name: 'Anthropic', is_remote: true, default_base_url: 'https://api.anthropic.com' },
+  { id: 'gemini', name: 'Google Gemini', is_remote: true, default_base_url: 'https://generativelanguage.googleapis.com' },
+  { id: 'openrouter', name: 'OpenRouter', is_remote: true, default_base_url: 'https://openrouter.ai/api/v1' },
+  { id: 'huggingface', name: 'Hugging Face', is_remote: true, default_base_url: 'https://api-inference.huggingface.co/models' },
+  { id: 'generic_http', name: 'Generic HTTP / vLLM', is_remote: true, default_base_url: '' }
+];
+
 export function ModelProvidersPage({
   connections = [],
   providers = [],
@@ -22,18 +32,19 @@ export function ModelProvidersPage({
   const [showSecret, setShowSecret] = useState(false);
   const [formFeedback, setFormFeedback] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const availableProviders = providers.length ? providers : FALLBACK_PROVIDERS;
 
   // Provider metadata arrives after the form mounts. Seed the URL once the
   // selected provider becomes available (including Home-page preselection).
   useEffect(() => {
-    const meta = providers.find(p => p.id === provider);
+    const meta = availableProviders.find(p => p.id === provider);
     setBaseUrl(current => current || meta?.default_base_url || '');
-  }, [provider, providers]);
+  }, [provider, availableProviders]);
 
   // Selecting a provider always starts with that provider's endpoint.
   function handleProviderChange(newProviderId) {
     setProvider(newProviderId);
-    const meta = providers.find(p => p.id === newProviderId);
+    const meta = availableProviders.find(p => p.id === newProviderId);
     setBaseUrl(meta?.default_base_url || '');
   }
 
@@ -157,23 +168,11 @@ export function ModelProvidersPage({
               onChange={e => handleProviderChange(e.target.value)}
               disabled={!!editId}
             >
-              {providers.length > 0 ? (
-                providers.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} {p.is_remote ? '(Cloud)' : '(Local)'}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value="ollama">Ollama (Local)</option>
-                  <option value="openai">OpenAI (Cloud)</option>
-                  <option value="anthropic">Anthropic (Cloud)</option>
-                  <option value="gemini">Google Gemini (Cloud)</option>
-                  <option value="openrouter">OpenRouter (Cloud)</option>
-                  <option value="huggingface">Hugging Face (Cloud)</option>
-                  <option value="generic_http">Generic HTTP / vLLM</option>
-                </>
-              )}
+              {availableProviders.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name} {p.is_remote ? '(Cloud)' : '(Local)'}
+                </option>
+              ))}
             </select>
           </div>
 
