@@ -41,16 +41,12 @@ export function ModelProvidersPage({
     setBaseUrl(current => current || meta?.default_base_url || '');
   }, [provider, availableProviders]);
 
-  // Follow provider defaults, but do not overwrite a custom endpoint.
+  // A provider selection always starts from that provider's known endpoint.
+  // Users can still customize the URL after making their selection.
   function handleProviderChange(newProviderId) {
-    const previousMeta = availableProviders.find(p => p.id === provider);
     const nextMeta = availableProviders.find(p => p.id === newProviderId);
     setProvider(newProviderId);
-    setBaseUrl(current => (
-      !current || current === previousMeta?.default_base_url
-        ? nextMeta?.default_base_url || ''
-        : current
-    ));
+    setBaseUrl(nextMeta?.default_base_url || '');
   }
 
   function handleEditClick(c) {
